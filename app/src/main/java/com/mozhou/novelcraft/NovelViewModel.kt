@@ -81,6 +81,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     val message = MutableStateFlow<String?>(null)
     val isGenerating = MutableStateFlow(false)
     val repairPlan = MutableStateFlow<String?>(null)
+    private val outlineCascadePending = MutableStateFlow(false)
 
     fun selectProject(projectId: Long) {
         selectedProjectId.value = projectId
@@ -532,6 +533,8 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
 
     fun reviseOutline(fromChapter: Int, description: String) {
         val project = selectedProject.value ?: return
+        if (isGenerating.value) { message.value = "生成进行中，请取消或等待完成后再改纲"; return }
+        outlineCascadePending.value = true
         val report = OutlineCascadeAnalyzer.analyze(fromChapter, chapters.value, storyItems.value, anchors.value, edges.value, description)
         viewModelScope.launch {
             repository.applyOutlineCascade(project, report, storyItems.value, anchors.value, edges.value)
@@ -543,11 +546,12 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val project = selectedProject.value ?: return
         viewModelScope.launch {
             repository.resolveOutlineCascade(project, storyItems.value, anchors.value, edges.value)
+            outlineCascadePending.value = false
             message.value = "已确认全部改纲待审项，可恢复 AI 写作"
         }
     }
 
-    private fun hasPendingCascade(): Boolean = storyItems.value.any { it.cascadePending } || anchors.value.any { it.cascadePending } || edges.value.any { it.cascadePending }
+    private fun hasPendingCascade(): Boolean = outlineCascadePending.value || selectedProject.value?.outlineRevisionReport?.isNotBlank() == true || storyItems.value.any { it.cascadePending } || anchors.value.any { it.cascadePending } || edges.value.any { it.cascadePending }
 
     fun markCurrentChapterQualityRepaired() {
         val chapter = selectedChapter.value ?: return

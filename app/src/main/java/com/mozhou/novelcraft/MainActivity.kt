@@ -622,7 +622,7 @@ private fun OutlineTab(
             Text(project.genre + " · " + project.title, color = Red, style = MaterialTheme.typography.labelMedium)
             Text("章节大纲", style = MaterialTheme.typography.headlineSmall)
             if (project.premise.isNotBlank()) Text(project.premise, color = Color.Gray)
-            OutlinedButton(onClick = { reviseDialogVisible = true }, modifier = Modifier.padding(top = 8.dp)) { Text("改纲级联") }
+            OutlinedButton(onClick = { reviseDialogVisible = true }, enabled = !isGenerating, modifier = Modifier.padding(top = 8.dp)) { Text("改纲级联") }
             if (project.outlineRevisionReport.isNotBlank()) {
                 Text(project.outlineRevisionReport, color = Gold, style = MaterialTheme.typography.labelSmall)
                 Button(onClick = onResolveOutlineCascade) { Text("确认已复核全部待审项") }
