@@ -108,7 +108,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private val outlineCascadePending = MutableStateFlow(false)
 
     init {
-        viewModelScope.launch { repository.pauseInterruptedAutoWriteRuns() }
+        viewModelScope.launch { repository.recoverInterruptedWritingState() }
     }
 
     private fun beginGeneration(task: GenerationTask): GenerationRequest? {
@@ -511,6 +511,14 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val input = "第${chapter.number}章 ${chapter.title}\n${chapter.content}"
         return modelClient.extractStoryMemory(modelConfig.value, input, request).fold(
             onSuccess = { raw ->
+                if (!repository.hasUnchangedContent(chapter)) {
+                    repository.updateChapterLifecycle(
+                        chapter = chapter,
+                        lifecycleStatus = ChapterLifecycleStatus.MEMORY_FAILED,
+                        lifecycleDetail = "正文已在处理期间修改，请重新运行章节闭环",
+                    )
+                    return@fold ChapterLifecycleResult(false, "正文已修改，请重新运行章节闭环")
+                }
                 runCatching { MemoryExtractionParser.parse(raw) }.fold(
                     onSuccess = { extraction ->
                         val memoryMessage = applyMemoryExtraction(chapter, extraction)
@@ -808,7 +816,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                         message.value = "批量写作已暂停：${currentRun.detail}"
                         return@launch
                     }
-                    val completed = repository.addGeneratedDraftChapter(project.id, body)
+                    val completed = repository.addGeneratedDraftChapter(project.id, body, currentRun.id)
                     workingChapters += completed
                     selectedChapterId.value = completed.id
                     val lifecycle = runChapterLifecycle(completed, request)
@@ -983,6 +991,15 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         if (task !in generationTasks.value) return
         generationRequests[task]?.cancel()
         generationJobs[task]?.cancel()
+        selectedChapter.value?.takeIf { it.lifecycleStatus == ChapterLifecycleStatus.PROCESSING }?.let { chapter ->
+            viewModelScope.launch {
+                repository.updateChapterLifecycle(
+                    chapter = chapter,
+                    lifecycleStatus = ChapterLifecycleStatus.MEMORY_FAILED,
+                    lifecycleDetail = "作者已取消处理，可在审阅页重试",
+                )
+            }
+        }
         finishGeneration(task, generationRequests[task] ?: return)
         message.value = "已取消${task.label}，其他任务继续运行"
     }

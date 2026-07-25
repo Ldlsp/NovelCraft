@@ -22,6 +22,7 @@ object StoryGraphExport {
         .replace("\"", "'")
         .replace("[", "(")
         .replace("]", ")")
+        .replace("|", "/")
         .replace("\n", " ")
         .trim()
 }

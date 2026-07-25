@@ -58,6 +58,7 @@ data class Chapter(
     val lifecycleStatus: String = ChapterLifecycleStatus.MANUAL,
     val lifecycleDetail: String = "",
     val memoryUpdatedAt: Long = 0,
+    val autoWriteRunId: Long = 0,
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
@@ -223,6 +224,12 @@ interface ChapterDao {
 
     @Query("DELETE FROM chapters WHERE id = :chapterId")
     suspend fun deleteById(chapterId: Long)
+
+    @Query("SELECT COUNT(*) FROM chapters WHERE autoWriteRunId = :runId")
+    suspend fun countByAutoWriteRun(runId: Long): Int
+
+    @Query("UPDATE chapters SET lifecycleStatus = :lifecycleStatus, lifecycleDetail = :detail WHERE lifecycleStatus = 'processing'")
+    suspend fun markInterruptedLifecycles(lifecycleStatus: String, detail: String)
 }
 
 @Dao
@@ -250,6 +257,9 @@ interface AutoWriteRunDao {
 
     @Query("UPDATE auto_write_runs SET status = 'paused', detail = :detail, updatedAt = :updatedAt WHERE status = 'running'")
     suspend fun pauseInterruptedRuns(detail: String, updatedAt: Long)
+
+    @Query("SELECT * FROM auto_write_runs WHERE status IN ('running', 'paused')")
+    suspend fun findRecoverableRuns(): List<AutoWriteRun>
 }
 
 @Dao
@@ -293,7 +303,7 @@ interface StoryEdgeDao {
 
 @Database(
     entities = [NovelProject::class, Chapter::class, ChapterRevision::class, AutoWriteRun::class, StoryItem::class, StoryAnchor::class, StoryEdge::class],
-    version = 11,
+    version = 12,
     exportSchema = false,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -424,11 +434,17 @@ abstract class NovelDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_auto_write_runs_projectId ON auto_write_runs(projectId)")
             }
         }
+        private val MIGRATION_11_12 = object : Migration(11, 12) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE chapters ADD COLUMN autoWriteRunId INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_chapters_autoWriteRunId ON chapters(autoWriteRunId)")
+            }
+        }
 
         fun create(context: Context): NovelDatabase = Room.databaseBuilder(
             context.applicationContext,
             NovelDatabase::class.java,
             "novelcraft.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12).build()
     }
 }

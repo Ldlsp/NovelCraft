@@ -135,7 +135,7 @@ class NovelRepository(private val database: NovelDatabase) {
         }
     }
 
-    suspend fun addGeneratedDraftChapter(projectId: Long, content: String): Chapter = database.withTransaction {
+    suspend fun addGeneratedDraftChapter(projectId: Long, content: String, autoWriteRunId: Long = 0): Chapter = database.withTransaction {
         val number = (database.chapterDao().maxNumber(projectId) ?: 0) + 1
         val timestamp = System.currentTimeMillis()
         val chapter = Chapter(
@@ -145,6 +145,7 @@ class NovelRepository(private val database: NovelDatabase) {
             content = content.trim(),
             lifecycleStatus = ChapterLifecycleStatus.PROCESSING,
             lifecycleDetail = "AI 正在同步本章记忆与门禁结果",
+            autoWriteRunId = autoWriteRunId,
             updatedAt = timestamp,
         )
         val id = database.chapterDao().insert(chapter)
@@ -162,8 +163,9 @@ class NovelRepository(private val database: NovelDatabase) {
     ) {
         val timestamp = System.currentTimeMillis()
         database.withTransaction {
+            val current = database.chapterDao().findById(chapter.id) ?: return@withTransaction
             database.chapterDao().update(
-                chapter.copy(
+                current.copy(
                     lifecycleStatus = lifecycleStatus,
                     lifecycleDetail = lifecycleDetail.trim(),
                     qualityStatus = qualityStatus,
@@ -175,6 +177,9 @@ class NovelRepository(private val database: NovelDatabase) {
             database.projectDao().touch(chapter.projectId, timestamp)
         }
     }
+
+    suspend fun hasUnchangedContent(chapter: Chapter): Boolean =
+        database.chapterDao().findById(chapter.id)?.content == chapter.content
 
     suspend fun markChapterQualityRepaired(chapter: Chapter) {
         updateChapterLifecycle(
@@ -246,6 +251,25 @@ class NovelRepository(private val database: NovelDatabase) {
             detail = "应用上次退出时写作尚未结束，可在处理当前章节后继续",
             updatedAt = System.currentTimeMillis(),
         )
+    }
+
+    suspend fun recoverInterruptedWritingState() = database.withTransaction {
+        database.chapterDao().markInterruptedLifecycles(
+            lifecycleStatus = ChapterLifecycleStatus.MEMORY_FAILED,
+            detail = "上次处理未完成，请重新运行章节闭环",
+        )
+        val now = System.currentTimeMillis()
+        database.autoWriteRunDao().findRecoverableRuns().forEach { run ->
+            val generatedCount = database.chapterDao().countByAutoWriteRun(run.id)
+            database.autoWriteRunDao().update(
+                run.copy(
+                    completedCount = maxOf(run.completedCount, generatedCount).coerceAtMost(run.requestedCount),
+                    status = AutoWriteRunStatus.PAUSED,
+                    detail = "已从本地草稿恢复进度，可在处理当前章节后继续",
+                    updatedAt = now,
+                ),
+            )
+        }
     }
 
     suspend fun addStoryItem(projectId: Long, kind: String, name: String, detail: String, status: String): Long {

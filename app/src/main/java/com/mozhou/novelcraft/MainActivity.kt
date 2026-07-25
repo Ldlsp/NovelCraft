@@ -1373,7 +1373,7 @@ private fun ReviewTab(
                     Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("写作闭环：${ChapterLifecycleStatus.label(current.lifecycleStatus)}", style = MaterialTheme.typography.titleSmall)
                         if (current.lifecycleDetail.isNotBlank()) Text(current.lifecycleDetail, color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
-                        if (current.lifecycleStatus == ChapterLifecycleStatus.MEMORY_FAILED || isLifecycleRunning) {
+                        if (current.lifecycleStatus == ChapterLifecycleStatus.MEMORY_FAILED || current.lifecycleStatus == ChapterLifecycleStatus.PROCESSING || isLifecycleRunning) {
                             OutlinedButton(
                                 onClick = if (isLifecycleRunning) onCancelLifecycle else onRetryLifecycle,
                                 enabled = isLifecycleRunning || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
