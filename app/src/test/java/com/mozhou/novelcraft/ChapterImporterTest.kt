@@ -36,5 +36,21 @@ class ChapterImporterTest {
         assertEquals(1, chapters.single().number)
         assertEquals("导入正文", chapters.single().title)
     }
-}
 
+    @Test
+    fun supportsChineseNumbersAndMarkdownHeadings() {
+        val chapters = ChapterImporter.parse(
+            """
+            ## 第十二章 月下旧约
+            第一段正文。
+
+            第十三章 回港
+            第二段正文。
+            """.trimIndent(),
+        )
+
+        assertEquals(listOf(12, 13), chapters.map { it.number })
+        assertEquals("月下旧约", chapters.first().title)
+        assertTrue(chapters.last().content.contains("第二段"))
+    }
+}
