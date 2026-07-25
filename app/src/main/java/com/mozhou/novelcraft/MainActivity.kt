@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.AccountCircle
@@ -93,6 +94,8 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
     val chapters by viewModel.chapters.collectAsStateWithLifecycle()
     val selectedChapter by viewModel.selectedChapter.collectAsStateWithLifecycle()
     val storyItems by viewModel.storyItems.collectAsStateWithLifecycle()
+    val contextPacket by viewModel.contextPacket.collectAsStateWithLifecycle()
+    val qualityIssues by viewModel.qualityIssues.collectAsStateWithLifecycle()
     val modelConfig by viewModel.modelConfig.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     var destination by rememberSaveable { mutableStateOf(MainDestination.SHELF) }
@@ -154,7 +157,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                     MainDestination.SHELF -> ShelfScreen(
                         projects = projects,
                         onCreate = { createProjectVisible = true },
-                        onImport = { importer.launch(arrayOf("text/plain", "text/markdown", "text/*")) },
+                        onImport = { importer.launch(arrayOf("text/plain", "text/markdown", "text/*", "application/vnd.openxmlformats-officedocument.wordprocessingml.document")) },
                         onOpen = {
                             viewModel.selectProject(it.id)
                             destination = MainDestination.WORKSPACE
@@ -169,10 +172,14 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 chapters = chapters,
                                 selectedChapter = selectedChapter,
                                 storyItems = storyItems,
+                                contextPacket = contextPacket,
+                                qualityIssues = qualityIssues,
                                 config = modelConfig,
                                 isGenerating = viewModel.isGenerating.collectAsStateWithLifecycle().value,
                                 onSelectChapter = viewModel::selectChapter,
                                 onSaveChapter = viewModel::saveChapter,
+                                onRenameChapter = viewModel::renameChapter,
+                                onAddChapter = viewModel::addChapter,
                                 onAddStoryItem = viewModel::addStoryItem,
                                 onGenerate = viewModel::generateContinuation,
                             )
@@ -263,7 +270,7 @@ private fun ShelfScreen(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
                 ActionCard("新建作品", "从灵感建立项目", Icons.Outlined.Add, Modifier.weight(1f), onCreate)
-                ActionCard("导入续写", "TXT / Markdown", Icons.Outlined.FileOpen, Modifier.weight(1f), onImport)
+                ActionCard("导入续写", "TXT / Markdown / DOCX", Icons.Outlined.FileOpen, Modifier.weight(1f), onImport)
             }
         }
         item { Text("我的作品", style = MaterialTheme.typography.titleLarge, modifier = Modifier.padding(top = 8.dp)) }
@@ -332,10 +339,14 @@ private fun WorkspaceScreen(
     chapters: List<Chapter>,
     selectedChapter: Chapter?,
     storyItems: List<StoryItem>,
+    contextPacket: ContextPacket,
+    qualityIssues: List<QualityIssue>,
     config: ModelConfig,
     isGenerating: Boolean,
     onSelectChapter: (Long) -> Unit,
     onSaveChapter: (String) -> Unit,
+    onRenameChapter: (String) -> Unit,
+    onAddChapter: () -> Unit,
     onAddStoryItem: (String, String, String) -> Unit,
     onGenerate: () -> Unit,
 ) {
@@ -347,10 +358,13 @@ private fun WorkspaceScreen(
             }
         }
         when (WorkspaceTab.entries[selectedTab]) {
-            WorkspaceTab.WRITE -> WriteTab(chapters, selectedChapter, config, isGenerating, onSelectChapter, onSaveChapter, onGenerate)
+            WorkspaceTab.WRITE -> WriteTab(
+                chapters, selectedChapter, contextPacket, config, isGenerating,
+                onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate,
+            )
             WorkspaceTab.OUTLINE -> OutlineTab(project, chapters)
             WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, onAddStoryItem)
-            WorkspaceTab.REVIEW -> ReviewTab(selectedChapter)
+            WorkspaceTab.REVIEW -> ReviewTab(qualityIssues)
         }
     }
 }
@@ -360,10 +374,13 @@ private fun WorkspaceScreen(
 private fun WriteTab(
     chapters: List<Chapter>,
     chapter: Chapter?,
+    contextPacket: ContextPacket,
     config: ModelConfig,
     isGenerating: Boolean,
     onSelectChapter: (Long) -> Unit,
     onSave: (String) -> Unit,
+    onRename: (String) -> Unit,
+    onAddChapter: () -> Unit,
     onGenerate: () -> Unit,
 ) {
     if (chapter == null) {
@@ -371,21 +388,16 @@ private fun WriteTab(
         return
     }
     var draft by remember(chapter.id, chapter.content) { mutableStateOf(chapter.content) }
+    var title by remember(chapter.id, chapter.title) { mutableStateOf(chapter.title) }
     Column(Modifier.fillMaxSize().padding(16.dp)) {
+        ChapterRail(chapters, chapter.id, onSelectChapter, onAddChapter)
         OutlinedTextField(
-            value = "第" + chapter.number + "章 · " + chapter.title,
-            onValueChange = {},
-            readOnly = true,
-            label = { Text("当前章节") },
+            value = title,
+            onValueChange = { title = it; onRename(it) },
+            label = { Text("第${chapter.number}章标题") },
             modifier = Modifier.fillMaxWidth(),
+            singleLine = true,
         )
-        if (chapters.size > 1) {
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(top = 8.dp)) {
-                chapters.take(5).forEach {
-                    TextButton(onClick = { onSelectChapter(it.id) }) { Text("第" + it.number + "章") }
-                }
-            }
-        }
         Text(draft.count { !it.isWhitespace() }.toString() + " 字 · 自动保存到 SQLite", color = Color.Gray, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(vertical = 8.dp))
         OutlinedTextField(
             value = draft,
@@ -394,6 +406,7 @@ private fun WriteTab(
             label = { Text("小说正文") },
             minLines = 12,
         )
+        ContextSummary(contextPacket)
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             Button(
@@ -412,6 +425,50 @@ private fun WriteTab(
         }
         if (config.baseUrl.isBlank() || config.apiKey.isBlank() || config.model.isBlank()) {
             Text("请先在“我的”填写 Base URL、API Key 与模型名称。", color = Gold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
+        }
+    }
+}
+
+@Composable
+private fun ChapterRail(chapters: List<Chapter>, selectedId: Long, onSelect: (Long) -> Unit, onAdd: () -> Unit) {
+    LazyRow(
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+    ) {
+        items(chapters, key = { it.id }) { item ->
+            if (item.id == selectedId) {
+                Button(onClick = { onSelect(item.id) }) { Text("第${item.number}章") }
+            } else {
+                TextButton(onClick = { onSelect(item.id) }) { Text("第${item.number}章") }
+            }
+        }
+        item {
+            IconButton(onClick = onAdd) { Icon(Icons.Outlined.Add, "新建章节") }
+        }
+    }
+}
+
+@Composable
+private fun ContextSummary(packet: ContextPacket) {
+    Card(
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFE5F0ED)),
+    ) {
+        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Outlined.Lightbulb, null, tint = Teal)
+            Spacer(Modifier.width(8.dp))
+            Column(Modifier.weight(1f)) {
+                Text("本次续写上下文", style = MaterialTheme.typography.labelLarge)
+                val names = packet.relevantItems.take(3).joinToString("、") { it.name }
+                Text(
+                    "${packet.relevantItems.size} 条设定 · ${packet.relevantChapters.size} 段章节摘录" + if (names.isBlank()) "" else "：$names",
+                    color = Color.Gray,
+                    style = MaterialTheme.typography.labelSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 }
@@ -459,7 +516,7 @@ private fun ResourcesTab(items: List<StoryItem>, onAdd: (String, String, String)
                         Icon(Icons.Outlined.Lightbulb, null, tint = Gold)
                         Spacer(Modifier.height(8.dp))
                         Text("还没有资料卡", style = MaterialTheme.typography.titleSmall)
-                        Text("添加人物、地点、伏笔或时间线，续写时会逐步纳入上下文。", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                        Text("添加人物、地点、伏笔、时间线或禁区；续写时会按当前情节自动检索。", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -487,19 +544,18 @@ private fun ResourcesTab(items: List<StoryItem>, onAdd: (String, String, String)
 }
 
 @Composable
-private fun ReviewTab(chapter: Chapter?) {
-    val count = chapter?.content?.count { !it.isWhitespace() } ?: 0
+private fun ReviewTab(issues: List<QualityIssue>) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text("发布前检查", style = MaterialTheme.typography.headlineSmall)
-            Text("首个版本使用本地可解释规则；复杂一致性检查将在后续版本添加。", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+            Text("全部是本地、可解释规则。提示不锁定创作，最终决定权始终在作者。", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
         }
-        item { AuditRow(true, "章节已保存", "正文已写入 SQLite") }
-        item { AuditRow(count >= 400, "基础字数", if (count >= 400) "当前 " + count + " 字" else "当前 " + count + " 字，建议至少 400 字") }
-        item { AuditRow(chapter?.content?.isNotBlank() == true, "正文非空", "没有检测到元信息占位符") }
+        items(issues) { issue ->
+            AuditRow(issue.severity == QualitySeverity.INFO, issue.title, issue.detail)
+        }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE5F0ED))) {
-                Text("作者拥有最终决定权：风格和节奏类问题只提示，不会锁死创作。", modifier = Modifier.padding(14.dp), style = MaterialTheme.typography.bodySmall)
+                Text("可检查：篇幅、占位符、重复段落、保密设定与结尾收束。", modifier = Modifier.padding(14.dp), style = MaterialTheme.typography.bodySmall)
             }
         }
     }
@@ -595,7 +651,7 @@ private fun AddStoryItemDialog(onDismiss: () -> Unit, onAdd: (String, String, St
         title = { Text("添加资料") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(value = kind, onValueChange = { kind = it }, label = { Text("类型，例如人物/伏笔/地点") })
+                OutlinedTextField(value = kind, onValueChange = { kind = it }, label = { Text("类型，例如人物/伏笔/时间线/禁区") })
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("名称") })
                 OutlinedTextField(value = detail, onValueChange = { detail = it }, label = { Text("状态或说明") }, minLines = 2)
             }

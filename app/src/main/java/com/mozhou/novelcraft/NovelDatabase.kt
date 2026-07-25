@@ -94,6 +94,9 @@ interface ChapterDao {
 
     @Update
     suspend fun update(chapter: Chapter)
+
+    @Query("SELECT MAX(number) FROM chapters WHERE projectId = :projectId")
+    suspend fun maxNumber(projectId: Long): Int?
 }
 
 @Dao

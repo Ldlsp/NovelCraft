@@ -20,8 +20,7 @@ class NovelRepository(private val database: NovelDatabase) {
     }
 
     suspend fun importProject(context: Context, uri: Uri, title: String): Long {
-        val text = context.contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
-            ?: error("无法读取导入文件")
+        val text = DocumentTextExtractor.read(context, uri)
         return database.withTransaction {
             val projectId = database.projectDao().insert(
                 NovelProject(title = title.ifBlank { "导入作品" }, genre = "待分类", premise = "从已有正文导入"),
@@ -41,6 +40,20 @@ class NovelRepository(private val database: NovelDatabase) {
             database.chapterDao().update(chapter.copy(content = content, updatedAt = timestamp))
             database.projectDao().touch(chapter.projectId, timestamp)
         }
+    }
+
+    suspend fun renameChapter(chapter: Chapter, title: String) {
+        val timestamp = System.currentTimeMillis()
+        database.chapterDao().update(chapter.copy(title = title.trim().ifBlank { "第${chapter.number}章" }, updatedAt = timestamp))
+        database.projectDao().touch(chapter.projectId, timestamp)
+    }
+
+    suspend fun addChapter(projectId: Long): Long {
+        val number = (database.chapterDao().maxNumber(projectId) ?: 0) + 1
+        val timestamp = System.currentTimeMillis()
+        val id = database.chapterDao().insert(Chapter(projectId = projectId, number = number, title = "第${number}章", updatedAt = timestamp))
+        database.projectDao().touch(projectId, timestamp)
+        return id
     }
 
     suspend fun addStoryItem(projectId: Long, kind: String, name: String, detail: String) {

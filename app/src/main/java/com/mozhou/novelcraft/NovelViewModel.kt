@@ -21,6 +21,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private val modelPreferences = ModelPreferences(application)
     private val modelClient = OpenAiCompatibleClient()
     private var saveChapterJob: Job? = null
+    private var renameChapterJob: Job? = null
 
     val projects = repository.projects().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val selectedProjectId = MutableStateFlow<Long?>(null)
@@ -41,6 +42,14 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     val selectedChapter = combine(chapters, selectedChapterId) { all, id ->
         all.firstOrNull { it.id == id } ?: all.firstOrNull()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val contextPacket = combine(selectedProject, selectedChapter, chapters, storyItems) { project, chapter, allChapters, items ->
+        if (project == null || chapter == null) ContextPacket() else ContextEngine.build(project, chapter, allChapters, items)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextPacket())
+
+    val qualityIssues = combine(selectedChapter, storyItems) { chapter, items ->
+        QualityGate.inspect(chapter, items)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val modelConfig = MutableStateFlow(modelPreferences.load())
     val message = MutableStateFlow<String?>(null)
@@ -93,6 +102,23 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun renameChapter(title: String) {
+        val chapter = selectedChapter.value ?: return
+        renameChapterJob?.cancel()
+        renameChapterJob = viewModelScope.launch {
+            delay(500)
+            repository.renameChapter(chapter, title)
+        }
+    }
+
+    fun addChapter() {
+        val projectId = selectedProjectId.value ?: return
+        viewModelScope.launch {
+            selectedChapterId.value = repository.addChapter(projectId)
+            message.value = "已新建章节"
+        }
+    }
+
     fun addStoryItem(kind: String, name: String, detail: String) {
         val projectId = selectedProjectId.value ?: return
         if (name.isBlank()) {
@@ -127,15 +153,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         if (isGenerating.value) return
         isGenerating.value = true
         message.value = "正在直接请求你的模型..."
-        val writingContext = listOf(
-            "作品：" + project.title,
-            "题材：" + project.genre,
-            "核心设定：" + project.premise,
-            "当前章节：第" + chapter.number + "章 " + chapter.title,
-            "正文末尾：",
-            chapter.content.takeLast(2200),
-            "请继续本章，先推进一个可见动作，保留未解决的冲突，并以一个具体钩子收尾。",
-        ).joinToString("\\n")
+        val writingContext = ContextEngine.build(project, chapter, chapters.value, storyItems.value).prompt
         viewModelScope.launch {
             modelClient.continueWriting(modelConfig.value, writingContext).fold(
                 onSuccess = { generated ->
