@@ -131,6 +131,8 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
     val project by viewModel.selectedProject.collectAsStateWithLifecycle()
     val chapters by viewModel.chapters.collectAsStateWithLifecycle()
     val selectedChapter by viewModel.selectedChapter.collectAsStateWithLifecycle()
+    val latestRevision by viewModel.latestRevision.collectAsStateWithLifecycle()
+    val resumableAutoWriteRun by viewModel.resumableAutoWriteRun.collectAsStateWithLifecycle()
     val storyItems by viewModel.storyItems.collectAsStateWithLifecycle()
     val anchors by viewModel.anchors.collectAsStateWithLifecycle()
     val edges by viewModel.edges.collectAsStateWithLifecycle()
@@ -230,6 +232,8 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 project = project!!,
                                 chapters = chapters,
                                 selectedChapter = selectedChapter,
+                                latestRevision = latestRevision,
+                                resumableAutoWriteRun = resumableAutoWriteRun,
                                 storyItems = storyItems,
                                 anchors = anchors,
                                 edges = edges,
@@ -261,12 +265,17 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onExtractMemory = viewModel::extractMemoryFromCurrentChapter,
                                 onGenerate = viewModel::generateContinuation,
                                 onAutoWrite = viewModel::autoWriteChapters,
+                                onResumeAutoWrite = viewModel::resumeAutoWrite,
                                 onGeneratePlan = viewModel::generateChapterPlan,
                                 onGenerateBeatSheet = viewModel::generateBeatSheet,
                                 onExtractStyleGuide = viewModel::extractStyleGuideFromCurrentChapter,
                                 onCancelGeneration = viewModel::cancelGeneration,
                                 onGenerateRepairPlan = viewModel::generateRepairPlan,
                                 onMarkQualityRepaired = viewModel::markCurrentChapterQualityRepaired,
+                                onRetryLifecycle = viewModel::retryCurrentChapterLifecycle,
+                                onRewriteChapter = viewModel::rewriteCurrentChapterForGate,
+                                onHumanizeChapter = viewModel::humanizeCurrentChapter,
+                                onRestoreRevision = viewModel::restoreLatestRevision,
                                 onReviseOutline = viewModel::reviseOutline,
                                 onResolveOutlineCascade = viewModel::resolveOutlineCascade,
                             )
@@ -477,6 +486,8 @@ private fun WorkspaceScreen(
     project: NovelProject,
     chapters: List<Chapter>,
     selectedChapter: Chapter?,
+    latestRevision: ChapterRevision?,
+    resumableAutoWriteRun: AutoWriteRun?,
     storyItems: List<StoryItem>,
     anchors: List<StoryAnchor>,
     edges: List<StoryEdge>,
@@ -508,12 +519,17 @@ private fun WorkspaceScreen(
     onExtractMemory: () -> Unit,
     onGenerate: () -> Unit,
     onAutoWrite: (Int) -> Unit,
+    onResumeAutoWrite: () -> Unit,
     onGeneratePlan: () -> Unit,
     onGenerateBeatSheet: () -> Unit,
     onExtractStyleGuide: () -> Unit,
     onCancelGeneration: (GenerationTask) -> Unit,
     onGenerateRepairPlan: () -> Unit,
     onMarkQualityRepaired: () -> Unit,
+    onRetryLifecycle: () -> Unit,
+    onRewriteChapter: () -> Unit,
+    onHumanizeChapter: () -> Unit,
+    onRestoreRevision: () -> Unit,
     onReviseOutline: (Int, String) -> Unit,
     onResolveOutlineCascade: () -> Unit,
 ) {
@@ -521,8 +537,8 @@ private fun WorkspaceScreen(
         GenerationTaskBar(activeTasks, onCancelGeneration)
         when (WorkspaceTab.entries[selectedTab]) {
             WorkspaceTab.WRITE -> WriteTab(
-                chapters, selectedChapter, contextPacket, config, activeTasks,
-                onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onDeleteChapter, onGenerate, onAutoWrite, onCancelGeneration,
+                chapters, selectedChapter, contextPacket, config, activeTasks, resumableAutoWriteRun,
+                onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onDeleteChapter, onGenerate, onAutoWrite, onResumeAutoWrite, onCancelGeneration,
             )
             WorkspaceTab.PROJECT -> ProjectTab(
                 project = project,
@@ -542,7 +558,23 @@ private fun WorkspaceScreen(
             )
             WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, activeTasks, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor, onReviseOutline, onResolveOutlineCascade)
             WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, GenerationTask.MEMORY_EXTRACTION in activeTasks, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory, { onCancelGeneration(GenerationTask.MEMORY_EXTRACTION) })
-            WorkspaceTab.REVIEW -> ReviewTab(selectedChapter, qualityIssues, repairPlan, config, GenerationTask.REPAIR_PLAN in activeTasks, onGenerateRepairPlan, onMarkQualityRepaired, { onCancelGeneration(GenerationTask.REPAIR_PLAN) })
+            WorkspaceTab.REVIEW -> ReviewTab(
+                selectedChapter,
+                latestRevision,
+                qualityIssues,
+                repairPlan,
+                config,
+                GenerationTask.REPAIR_PLAN in activeTasks,
+                GenerationTask.CHAPTER_LIFECYCLE in activeTasks,
+                onGenerateRepairPlan,
+                onMarkQualityRepaired,
+                onRetryLifecycle,
+                onRewriteChapter,
+                onHumanizeChapter,
+                onRestoreRevision,
+                { onCancelGeneration(GenerationTask.REPAIR_PLAN) },
+                { onCancelGeneration(GenerationTask.CHAPTER_LIFECYCLE) },
+            )
         }
     }
 }
@@ -690,6 +722,7 @@ private fun WriteTab(
     contextPacket: ContextPacket,
     config: ModelConfig,
     activeTasks: Set<GenerationTask>,
+    resumableAutoWriteRun: AutoWriteRun?,
     onSelectChapter: (Long) -> Unit,
     onSave: (String) -> Unit,
     onRename: (String) -> Unit,
@@ -697,6 +730,7 @@ private fun WriteTab(
     onDeleteChapter: () -> Unit,
     onGenerate: () -> Unit,
     onAutoWrite: (Int) -> Unit,
+    onResumeAutoWrite: () -> Unit,
     onCancel: (GenerationTask) -> Unit,
 ) {
     if (chapter == null) {
@@ -731,6 +765,14 @@ private fun WriteTab(
                         onClick = { if (isAutoWriting) onCancel(GenerationTask.AUTO_WRITE) else autoWriteDialogVisible = true; moreMenuVisible = false },
                         enabled = isAutoWriting || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
                     )
+                    resumableAutoWriteRun?.let { run ->
+                        DropdownMenuItem(
+                            text = { Text("继续批量写作（${run.completedCount}/${run.requestedCount}）") },
+                            leadingIcon = { Icon(Icons.Outlined.AutoStories, null) },
+                            onClick = { onResumeAutoWrite(); moreMenuVisible = false },
+                            enabled = !isAutoWriting && config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
+                        )
+                    }
                     DropdownMenuItem(
                         text = { Text("删除本章", color = Red) },
                         leadingIcon = { Icon(Icons.Outlined.Delete, null, tint = Red) },
@@ -1299,13 +1341,20 @@ private fun StoryEdgeDialog(
 @Composable
 private fun ReviewTab(
     chapter: Chapter?,
+    latestRevision: ChapterRevision?,
     issues: List<QualityIssue>,
     repairPlan: String?,
     config: ModelConfig,
     isGenerating: Boolean,
+    isLifecycleRunning: Boolean,
     onGenerateRepairPlan: () -> Unit,
     onMarkQualityRepaired: () -> Unit,
+    onRetryLifecycle: () -> Unit,
+    onRewriteChapter: () -> Unit,
+    onHumanizeChapter: () -> Unit,
+    onRestoreRevision: () -> Unit,
     onCancel: () -> Unit,
+    onCancelLifecycle: () -> Unit,
 ) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -1316,6 +1365,51 @@ private fun ReviewTab(
         if (chapter?.qualityStatus == ChapterQualityStatus.NEEDS_REPAIR) {
             item {
                 Button(onClick = onMarkQualityRepaired) { Text("确认已修复本章") }
+            }
+        }
+        chapter?.let { current ->
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F3FF))) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("写作闭环：${ChapterLifecycleStatus.label(current.lifecycleStatus)}", style = MaterialTheme.typography.titleSmall)
+                        if (current.lifecycleDetail.isNotBlank()) Text(current.lifecycleDetail, color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
+                        if (current.lifecycleStatus == ChapterLifecycleStatus.MEMORY_FAILED || isLifecycleRunning) {
+                            OutlinedButton(
+                                onClick = if (isLifecycleRunning) onCancelLifecycle else onRetryLifecycle,
+                                enabled = isLifecycleRunning || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
+                            ) {
+                                Icon(if (isLifecycleRunning) Icons.Outlined.Close else Icons.Outlined.AutoStories, null)
+                                Spacer(Modifier.width(6.dp))
+                                Text(if (isLifecycleRunning) "取消章节闭环" else "重试章节闭环")
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (chapter?.content?.isNotBlank() == true) {
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF4DA))) {
+                    Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Text("AI 编辑", style = MaterialTheme.typography.titleSmall)
+                        Text("每次改写前都会在本机保留一份可撤回的正文备份，改写后自动重新跑记忆和门禁。", color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                            OutlinedButton(
+                                onClick = onRewriteChapter,
+                                modifier = Modifier.weight(1f),
+                                enabled = config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
+                            ) { Text("按门禁改写", maxLines = 1) }
+                            OutlinedButton(
+                                onClick = onHumanizeChapter,
+                                modifier = Modifier.weight(1f),
+                                enabled = config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
+                            ) { Text("去 AI 味", maxLines = 1) }
+                        }
+                        latestRevision?.let { revision ->
+                            TextButton(onClick = onRestoreRevision) { Text("撤回上次 AI 改写（${revision.reason}）") }
+                        }
+                    }
+                }
             }
         }
         items(issues) { issue ->

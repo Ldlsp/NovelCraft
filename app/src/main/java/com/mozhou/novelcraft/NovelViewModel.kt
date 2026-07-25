@@ -13,8 +13,11 @@ import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import java.io.File
 
 private data class WritingContextInput(
@@ -44,6 +47,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private var savePlanJob: Job? = null
     private var saveBeatSheetJob: Job? = null
     private var saveStyleJob: Job? = null
+    private var autoWritePreparing = false
     private val generationJobs = mutableMapOf<GenerationTask, Job>()
     private val generationRequests = mutableMapOf<GenerationTask, GenerationRequest>()
     private val pendingChapterContent = mutableMapOf<Long, String>()
@@ -76,6 +80,14 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         all.firstOrNull { it.id == id } ?: all.firstOrNull()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val latestRevision = selectedChapter.flatMapLatest { chapter ->
+        if (chapter == null) flowOf(null) else repository.latestRevision(chapter.id)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val resumableAutoWriteRun = selectedProjectId.flatMapLatest { projectId ->
+        if (projectId == null) flowOf(null) else repository.resumableAutoWriteRun(projectId)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     private val writingContextInput = combine(selectedProject, selectedChapter, chapters, storyItems, anchors) { project, chapter, allChapters, items, projectAnchors ->
         WritingContextInput(project, chapter, allChapters, items, projectAnchors)
     }
@@ -96,6 +108,11 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private val outlineCascadePending = MutableStateFlow(false)
 
     private fun beginGeneration(task: GenerationTask): GenerationRequest? {
+        val activeTask = generationTasks.value.firstOrNull()
+        if (activeTask != null) {
+            message.value = "正在执行${activeTask.label}，请等待完成或先取消"
+            return null
+        }
         if (task in generationTasks.value) {
             message.value = "${task.label}正在生成"
             return null
@@ -158,6 +175,8 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
         val chaptersToExport = chapters.value
+        val itemsToExport = storyItems.value
+        val edgesToExport = edges.value
         viewModelScope.launch {
             runCatching {
                 val markdown = buildString {
@@ -171,6 +190,11 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                         appendLine(chapter.content.trim())
                         appendLine()
                     }
+                    appendLine("## 知识图谱")
+                    appendLine()
+                    appendLine("```mermaid")
+                    appendLine(StoryGraphExport.asMermaid(itemsToExport, edgesToExport))
+                    appendLine("```")
                 }
                 getApplication<Application>().contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(markdown) }
                     ?: error("无法创建导出文件")
@@ -441,6 +465,95 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private suspend fun applyMemoryExtraction(chapter: Chapter, extraction: MemoryExtraction): String {
+        val knownByName = storyItems.value.associateBy { it.name }.toMutableMap()
+        var addedItems = 0
+        extraction.items.distinctBy { it.name }.forEach { candidate ->
+            val existing = knownByName[candidate.name]
+            if (existing == null) {
+                val id = repository.addStoryItem(chapter.projectId, candidate.kind, candidate.name, candidate.detail, candidate.status)
+                knownByName[candidate.name] = StoryItem(
+                    id = id,
+                    projectId = chapter.projectId,
+                    kind = candidate.kind,
+                    name = candidate.name,
+                    detail = candidate.detail,
+                    status = candidate.status,
+                )
+                addedItems += 1
+            } else if (candidate.detail.isNotBlank() && (existing.detail != candidate.detail || existing.status != candidate.status)) {
+                repository.updateStoryItem(existing, candidate.kind, candidate.name, candidate.detail, candidate.status)
+            }
+        }
+        val knownEdges = edges.value.map { Triple(it.sourceItemId, it.targetItemId, it.relation) }.toMutableSet()
+        var addedEdges = 0
+        extraction.edges.forEach { candidate ->
+            val source = knownByName[candidate.sourceName] ?: return@forEach
+            val target = knownByName[candidate.targetName] ?: return@forEach
+            if (source.id != target.id && knownEdges.add(Triple(source.id, target.id, candidate.relation))) {
+                repository.addEdge(chapter.projectId, source.id, target.id, candidate.relation, candidate.description, chapter.number)
+                addedEdges += 1
+            }
+        }
+        return "记忆已更新：新增 $addedItems 条资料、$addedEdges 条关系"
+    }
+
+    private suspend fun runChapterLifecycle(chapter: Chapter, request: GenerationRequest): ChapterLifecycleResult {
+        repository.updateChapterLifecycle(
+            chapter = chapter,
+            lifecycleStatus = ChapterLifecycleStatus.PROCESSING,
+            lifecycleDetail = "正在提取本章已发生的角色、事件、伏笔和关系",
+        )
+        val input = "第${chapter.number}章 ${chapter.title}\n${chapter.content}"
+        return modelClient.extractStoryMemory(modelConfig.value, input, request).fold(
+            onSuccess = { raw ->
+                runCatching { MemoryExtractionParser.parse(raw) }.fold(
+                    onSuccess = { extraction ->
+                        val memoryMessage = applyMemoryExtraction(chapter, extraction)
+                        val warnings = QualityGate.inspect(chapter, storyItems.value, anchors.value)
+                            .filter { it.severity == QualitySeverity.WARNING }
+                        if (warnings.isEmpty()) {
+                            repository.updateChapterLifecycle(
+                                chapter = chapter,
+                                lifecycleStatus = ChapterLifecycleStatus.PASSED,
+                                lifecycleDetail = memoryMessage,
+                                memoryUpdatedAt = System.currentTimeMillis(),
+                            )
+                            ChapterLifecycleResult(true, "$memoryMessage；门禁已通过")
+                        } else {
+                            val summary = warnings.joinToString("；") { it.title }
+                            repository.updateChapterLifecycle(
+                                chapter = chapter,
+                                lifecycleStatus = ChapterLifecycleStatus.WAITING_REVIEW,
+                                lifecycleDetail = "$memoryMessage；请在审阅页处理后确认",
+                                qualityStatus = ChapterQualityStatus.NEEDS_REPAIR,
+                                qualityIssueSummary = summary,
+                                memoryUpdatedAt = System.currentTimeMillis(),
+                            )
+                            ChapterLifecycleResult(false, "门禁发现 ${warnings.size} 项风险：$summary")
+                        }
+                    },
+                    onFailure = {
+                        repository.updateChapterLifecycle(
+                            chapter = chapter,
+                            lifecycleStatus = ChapterLifecycleStatus.MEMORY_FAILED,
+                            lifecycleDetail = "记忆解析失败：${it.message ?: "模型返回格式无效"}",
+                        )
+                        ChapterLifecycleResult(false, "记忆同步失败，可在审阅页重试")
+                    },
+                )
+            },
+            onFailure = {
+                repository.updateChapterLifecycle(
+                    chapter = chapter,
+                    lifecycleStatus = ChapterLifecycleStatus.MEMORY_FAILED,
+                    lifecycleDetail = "记忆同步失败：${it.message ?: "模型请求失败"}",
+                )
+                ChapterLifecycleResult(false, "记忆同步失败，可在审阅页重试")
+            },
+        )
+    }
+
     fun extractMemoryFromCurrentChapter() {
         val chapter = selectedChapter.value ?: return
         val content = pendingChapterContent[chapter.id] ?: chapter.content
@@ -629,6 +742,10 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     fun generateContinuation() {
         val project = selectedProject.value ?: return
         val chapter = selectedChapter.value ?: return
+        blockingLifecycleChapter()?.let {
+            message.value = "第${it.number}章尚未完成写作闭环，请先到审阅页处理"
+            return
+        }
         if (hasPendingCascade()) { message.value = "改纲待审项尚未复核，暂不能继续写作"; return }
         val sourceContent = pendingChapterContent[chapter.id] ?: chapter.content
         val sourceChapter = chapter.copy(content = sourceContent)
@@ -645,8 +762,10 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                         saveChapterJobs.remove(chapter.id)?.cancel()
                         val currentChapter = chapters.value.firstOrNull { it.id == chapter.id } ?: chapter
                         val currentContent = pendingChapterContent.remove(chapter.id) ?: currentChapter.content
-                        repository.updateChapter(currentChapter, currentContent.trimEnd() + "\n\n" + generated)
-                        message.value = "已续写并保存到本机"
+                        val updatedChapter = currentChapter.copy(content = currentContent.trimEnd() + "\n\n" + generated)
+                        repository.updateChapter(currentChapter, updatedChapter.content)
+                        val lifecycle = runChapterLifecycle(updatedChapter, request)
+                        message.value = if (lifecycle.passed) "已续写并完成闭环：${lifecycle.message}" else "已保存续写草稿：${lifecycle.message}"
                     },
                     onFailure = { message.value = it.message ?: "续写失败" },
                 )
@@ -656,47 +775,96 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun autoWriteChapters(count: Int) {
-        val project = selectedProject.value ?: return
-        if (hasPendingCascade()) { message.value = "改纲待审项尚未复核，暂不能批量写作"; return }
-        val total = count.coerceIn(1, 5)
-        val request = beginGeneration(GenerationTask.AUTO_WRITE) ?: return
-        message.value = "自动写作已启动：准备生成 $total 章"
+    private fun startAutoWrite(project: NovelProject, run: AutoWriteRun) {
+        blockingLifecycleChapter()?.let {
+            message.value = "第${it.number}章尚未完成写作闭环，不能开始批量写作"
+            return
+        }
+        if (hasPendingCascade()) {
+            message.value = "改纲待审项尚未复核，暂不能批量写作"
+            return
+        }
+        val request = beginGeneration(GenerationTask.AUTO_WRITE) ?: run {
+            viewModelScope.launch {
+                repository.updateAutoWriteRun(run, run.completedCount, AutoWriteRunStatus.PAUSED, "等待其他 AI 任务结束")
+            }
+            return
+        }
         generationJobs[GenerationTask.AUTO_WRITE] = viewModelScope.launch {
+            var currentRun = repository.updateAutoWriteRun(run, run.completedCount, AutoWriteRunStatus.RUNNING, "正在准备第${run.completedCount + 1}章")
             try {
                 val workingChapters = chapters.value.toMutableList()
-                repeat(total) { index ->
-                    if (!isActive) return@launch
+                repeat(currentRun.requestedCount - currentRun.completedCount) {
                     val nextNumber = (workingChapters.maxOfOrNull { it.number } ?: 0) + 1
                     val target = Chapter(projectId = project.id, number = nextNumber, title = "第${nextNumber}章")
                     val context = ContextEngine.build(project, target, workingChapters, storyItems.value, anchors.value, edges.value).prompt +
-                        "\n这是批量写作的第${index + 1}/${total} 章。请完整写出本章。"
-                    val result = modelClient.writeFullChapter(modelConfig.value, context, request)
-                    if (!isActive) return@launch
-                    val body = result.getOrElse {
-                        message.value = "自动写作在第${nextNumber}章停止：${it.message ?: "模型请求失败"}"
+                        "\n这是可恢复批量写作的第${currentRun.completedCount + 1}/${currentRun.requestedCount}章。请完整写出本章。"
+                    val body = modelClient.writeFullChapter(modelConfig.value, context, request).getOrElse {
+                        currentRun = repository.updateAutoWriteRun(currentRun, currentRun.completedCount, AutoWriteRunStatus.PAUSED, it.message ?: "模型请求失败")
+                        message.value = "批量写作已暂停：${currentRun.detail}"
                         return@launch
                     }
-                    val generatedDraft = target.copy(content = body)
-                    val warnings = QualityGate.inspect(generatedDraft, storyItems.value, anchors.value)
-                        .filter { it.severity == QualitySeverity.WARNING }
-                    val completed = repository.addCompletedChapter(
-                        project.id,
-                        body,
-                        if (warnings.isEmpty()) ChapterQualityStatus.READY else ChapterQualityStatus.NEEDS_REPAIR,
-                        warnings.joinToString("；") { it.title },
-                    )
+                    val completed = repository.addGeneratedDraftChapter(project.id, body)
                     workingChapters += completed
                     selectedChapterId.value = completed.id
-                    if (warnings.isNotEmpty()) {
-                        message.value = "第${completed.number}章已保存为待修复草稿，门禁提示 ${warnings.size} 项，自动写作已停止"
+                    val lifecycle = runChapterLifecycle(completed, request)
+                    if (!lifecycle.passed) {
+                        currentRun = repository.updateAutoWriteRun(currentRun, currentRun.completedCount, AutoWriteRunStatus.PAUSED, "第${completed.number}章：${lifecycle.message}")
+                        message.value = "第${completed.number}章待处理，批量写作已暂停"
                         return@launch
                     }
-                    message.value = "已完成第${completed.number}章（${index + 1}/${total}）"
+                    currentRun = repository.updateAutoWriteRun(
+                        currentRun,
+                        currentRun.completedCount + 1,
+                        AutoWriteRunStatus.RUNNING,
+                        "第${completed.number}章已通过写作闭环",
+                    )
+                    message.value = "第${completed.number}章已通过写作闭环（${currentRun.completedCount}/${currentRun.requestedCount}）"
                 }
-                message.value = "批量写作完成，共生成 ${total} 章"
+                repository.updateAutoWriteRun(currentRun, currentRun.requestedCount, AutoWriteRunStatus.COMPLETED, "全部章节已通过写作闭环")
+                message.value = "批量写作完成，共生成 ${currentRun.requestedCount} 章"
+            } catch (cancelled: CancellationException) {
+                withContext(NonCancellable) {
+                    repository.updateAutoWriteRun(currentRun, currentRun.completedCount, AutoWriteRunStatus.PAUSED, "作者已暂停，可在处理当前章节后继续")
+                }
+                throw cancelled
             } finally {
                 finishGeneration(GenerationTask.AUTO_WRITE, request)
+            }
+        }
+    }
+
+    fun resumeAutoWrite() {
+        val project = selectedProject.value ?: return
+        val run = resumableAutoWriteRun.value ?: run {
+            message.value = "没有可继续的批量写作计划"
+            return
+        }
+        startAutoWrite(project, run)
+    }
+
+    fun autoWriteChapters(count: Int) {
+        val project = selectedProject.value ?: return
+        blockingLifecycleChapter()?.let {
+            message.value = "第${it.number}章尚未完成写作闭环，不能开始批量写作"
+            return
+        }
+        if (hasPendingCascade()) {
+            message.value = "改纲待审项尚未复核，暂不能批量写作"
+            return
+        }
+        if (autoWritePreparing) {
+            message.value = "正在创建批量写作计划"
+            return
+        }
+        val total = count.coerceIn(1, 5)
+        autoWritePreparing = true
+        viewModelScope.launch {
+            try {
+                val run = repository.createAutoWriteRun(project.id, total)
+                startAutoWrite(project, run)
+            } finally {
+                autoWritePreparing = false
             }
         }
     }
@@ -704,6 +872,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     fun reviseOutline(fromChapter: Int, description: String) {
         val project = selectedProject.value ?: return
         outlineCascadePending.value = true
+        generationTasks.value.toList().forEach(::cancelGeneration)
         val report = OutlineCascadeAnalyzer.analyze(fromChapter, chapters.value, storyItems.value, anchors.value, edges.value, description)
         viewModelScope.launch {
             repository.applyOutlineCascade(project, report, storyItems.value, anchors.value, edges.value)
@@ -722,11 +891,91 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun hasPendingCascade(): Boolean = outlineCascadePending.value || selectedProject.value?.outlineRevisionReport?.isNotBlank() == true || storyItems.value.any { it.cascadePending } || anchors.value.any { it.cascadePending } || edges.value.any { it.cascadePending }
 
+    private fun blockingLifecycleChapter(): Chapter? = chapters.value
+        .sortedByDescending { it.number }
+        .firstOrNull { ChapterLifecycleStatus.blocksAutomaticWriting(it.lifecycleStatus) }
+
     fun markCurrentChapterQualityRepaired() {
         val chapter = selectedChapter.value ?: return
         viewModelScope.launch {
             repository.markChapterQualityRepaired(chapter)
             message.value = "已标记本章门禁问题为已处理"
+        }
+    }
+
+    fun retryCurrentChapterLifecycle() {
+        val chapter = selectedChapter.value ?: return
+        if (chapter.content.isBlank()) {
+            message.value = "本章还没有正文，无法运行写作闭环"
+            return
+        }
+        val request = beginGeneration(GenerationTask.CHAPTER_LIFECYCLE) ?: return
+        message.value = "正在重试章节记忆与质量门禁..."
+        generationJobs[GenerationTask.CHAPTER_LIFECYCLE] = viewModelScope.launch {
+            try {
+                val result = runChapterLifecycle(chapter, request)
+                message.value = if (result.passed) "章节闭环完成：${result.message}" else result.message
+            } finally {
+                finishGeneration(GenerationTask.CHAPTER_LIFECYCLE, request)
+            }
+        }
+    }
+
+    private fun rewriteCurrentChapter(task: GenerationTask, humanize: Boolean) {
+        val project = selectedProject.value ?: return
+        val chapter = selectedChapter.value ?: return
+        val content = pendingChapterContent[chapter.id] ?: chapter.content
+        if (content.isBlank()) {
+            message.value = "本章还没有正文，无法改写"
+            return
+        }
+        val request = beginGeneration(task) ?: return
+        message.value = if (humanize) "正在润色本章语言..." else "正在按门禁问题改写本章..."
+        generationJobs[task] = viewModelScope.launch {
+            try {
+                saveChapterJobs.remove(chapter.id)?.cancel()
+                pendingChapterContent.remove(chapter.id)
+                val source = chapter.copy(content = content)
+                if (source.content != chapter.content) repository.updateChapter(chapter, source.content)
+                val context = buildString {
+                    append(ContextEngine.build(project, source, chapters.value, storyItems.value, anchors.value, edges.value).prompt)
+                    appendLine("\n当前完整正文：")
+                    appendLine(source.content)
+                    if (!humanize) {
+                        appendLine("\n需要处理的门禁问题：")
+                        QualityGate.inspect(source, storyItems.value, anchors.value).forEach { appendLine("- ${it.title}：${it.detail}") }
+                    }
+                }
+                val result = if (humanize) modelClient.humanizeChapter(modelConfig.value, context, request)
+                else modelClient.rewriteChapter(modelConfig.value, context, request)
+                result.fold(
+                    onSuccess = { replacement ->
+                        val updated = repository.replaceChapterWithRevision(
+                            source,
+                            replacement,
+                            if (humanize) "去 AI 味润色" else "按门禁问题 AI 改写",
+                        )
+                        val lifecycle = runChapterLifecycle(updated, request)
+                        message.value = if (lifecycle.passed) "AI 改写已复检通过，可在审阅页撤回" else "AI 改写已保存：${lifecycle.message}"
+                    },
+                    onFailure = { message.value = it.message ?: "AI 改写失败" },
+                )
+            } finally {
+                finishGeneration(task, request)
+            }
+        }
+    }
+
+    fun rewriteCurrentChapterForGate() = rewriteCurrentChapter(GenerationTask.CHAPTER_REWRITE, humanize = false)
+
+    fun humanizeCurrentChapter() = rewriteCurrentChapter(GenerationTask.HUMANIZE, humanize = true)
+
+    fun restoreLatestRevision() {
+        val chapter = selectedChapter.value ?: return
+        val revision = latestRevision.value ?: return
+        viewModelScope.launch {
+            repository.restoreRevision(chapter, revision)
+            message.value = "已撤回 AI 改写，恢复此前正文"
         }
     }
 

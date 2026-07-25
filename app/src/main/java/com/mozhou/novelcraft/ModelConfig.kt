@@ -124,6 +124,22 @@ class OpenAiCompatibleClient {
         request = request,
     )
 
+    suspend fun rewriteChapter(config: ModelConfig, context: String, request: GenerationRequest? = null): Result<String> = chat(
+        config = config,
+        context = context,
+        temperature = 0.55,
+        systemInstruction = "你是中文网文责任编辑。只重写用户给出的当前章节正文，逐项解决已列出的门禁问题，保留已经成立的剧情事实、角色关系、叙事视角和未解悬念。只输出完整正文，不要标题、说明、Markdown 或分析。",
+        request = request,
+    )
+
+    suspend fun humanizeChapter(config: ModelConfig, context: String, request: GenerationRequest? = null): Result<String> = chat(
+        config = config,
+        context = context,
+        temperature = 0.65,
+        systemInstruction = "你是中文网文语言编辑。仅润色用户给出的当前章节：删减机械重复、概念复述和模板化转折，使动作、感官细节和人物语气更自然；不得改变剧情事件、人物关系、伏笔状态、叙事视角或字数规模。只输出完整正文，不要标题、说明、Markdown 或分析。",
+        request = request,
+    )
+
     suspend fun extractStyleGuide(config: ModelConfig, sample: String, request: GenerationRequest? = null): Result<String> = chat(
         config = config,
         context = sample,

@@ -10,6 +10,8 @@ class NovelRepository(private val database: NovelDatabase) {
     fun projects(): Flow<List<NovelProject>> = database.projectDao().observeAll()
     fun project(projectId: Long): Flow<NovelProject?> = database.projectDao().observe(projectId)
     fun chapters(projectId: Long): Flow<List<Chapter>> = database.chapterDao().observeByProject(projectId)
+    fun latestRevision(chapterId: Long): Flow<ChapterRevision?> = database.chapterRevisionDao().observeLatest(chapterId)
+    fun resumableAutoWriteRun(projectId: Long): Flow<AutoWriteRun?> = database.autoWriteRunDao().observeResumable(projectId)
     fun storyItems(projectId: Long): Flow<List<StoryItem>> = database.storyItemDao().observeByProject(projectId)
     fun anchors(projectId: Long): Flow<List<StoryAnchor>> = database.storyAnchorDao().observeByProject(projectId)
     fun edges(projectId: Long): Flow<List<StoryEdge>> = database.storyEdgeDao().observeByProject(projectId)
@@ -133,7 +135,7 @@ class NovelRepository(private val database: NovelDatabase) {
         }
     }
 
-    suspend fun addCompletedChapter(projectId: Long, content: String, qualityStatus: String, qualityIssueSummary: String): Chapter = database.withTransaction {
+    suspend fun addGeneratedDraftChapter(projectId: Long, content: String): Chapter = database.withTransaction {
         val number = (database.chapterDao().maxNumber(projectId) ?: 0) + 1
         val timestamp = System.currentTimeMillis()
         val chapter = Chapter(
@@ -141,8 +143,8 @@ class NovelRepository(private val database: NovelDatabase) {
             number = number,
             title = "第${number}章",
             content = content.trim(),
-            qualityStatus = qualityStatus,
-            qualityIssueSummary = qualityIssueSummary.trim(),
+            lifecycleStatus = ChapterLifecycleStatus.PROCESSING,
+            lifecycleDetail = "AI 正在同步本章记忆与门禁结果",
             updatedAt = timestamp,
         )
         val id = database.chapterDao().insert(chapter)
@@ -150,8 +152,93 @@ class NovelRepository(private val database: NovelDatabase) {
         chapter.copy(id = id)
     }
 
+    suspend fun updateChapterLifecycle(
+        chapter: Chapter,
+        lifecycleStatus: String,
+        lifecycleDetail: String = "",
+        qualityStatus: String = chapter.qualityStatus,
+        qualityIssueSummary: String = chapter.qualityIssueSummary,
+        memoryUpdatedAt: Long = chapter.memoryUpdatedAt,
+    ) {
+        val timestamp = System.currentTimeMillis()
+        database.withTransaction {
+            database.chapterDao().update(
+                chapter.copy(
+                    lifecycleStatus = lifecycleStatus,
+                    lifecycleDetail = lifecycleDetail.trim(),
+                    qualityStatus = qualityStatus,
+                    qualityIssueSummary = qualityIssueSummary.trim(),
+                    memoryUpdatedAt = memoryUpdatedAt,
+                    updatedAt = timestamp,
+                ),
+            )
+            database.projectDao().touch(chapter.projectId, timestamp)
+        }
+    }
+
     suspend fun markChapterQualityRepaired(chapter: Chapter) {
-        database.chapterDao().update(chapter.copy(qualityStatus = ChapterQualityStatus.READY, qualityIssueSummary = "", updatedAt = System.currentTimeMillis()))
+        updateChapterLifecycle(
+            chapter = chapter,
+            lifecycleStatus = ChapterLifecycleStatus.PASSED,
+            lifecycleDetail = "作者已确认处理门禁提示",
+            qualityStatus = ChapterQualityStatus.READY,
+            qualityIssueSummary = "",
+        )
+    }
+
+    suspend fun replaceChapterWithRevision(chapter: Chapter, replacement: String, reason: String): Chapter = database.withTransaction {
+        val timestamp = System.currentTimeMillis()
+        database.chapterRevisionDao().insert(
+            ChapterRevision(
+                projectId = chapter.projectId,
+                chapterId = chapter.id,
+                previousContent = chapter.content,
+                reason = reason,
+            ),
+        )
+        val updated = chapter.copy(
+            content = replacement.trim(),
+            qualityStatus = ChapterQualityStatus.READY,
+            qualityIssueSummary = "",
+            lifecycleStatus = ChapterLifecycleStatus.PROCESSING,
+            lifecycleDetail = "AI 改写完成，正在重新同步记忆与门禁",
+            updatedAt = timestamp,
+        )
+        database.chapterDao().update(updated)
+        database.projectDao().touch(chapter.projectId, timestamp)
+        updated
+    }
+
+    suspend fun restoreRevision(chapter: Chapter, revision: ChapterRevision): Chapter = database.withTransaction {
+        val timestamp = System.currentTimeMillis()
+        val restored = chapter.copy(
+            content = revision.previousContent,
+            lifecycleStatus = ChapterLifecycleStatus.MANUAL,
+            lifecycleDetail = "已撤回 AI 改写：${revision.reason}",
+            qualityStatus = ChapterQualityStatus.READY,
+            qualityIssueSummary = "",
+            updatedAt = timestamp,
+        )
+        database.chapterDao().update(restored)
+        database.chapterRevisionDao().deleteById(revision.id)
+        database.projectDao().touch(chapter.projectId, timestamp)
+        restored
+    }
+
+    suspend fun createAutoWriteRun(projectId: Long, requestedCount: Int): AutoWriteRun {
+        val run = AutoWriteRun(projectId = projectId, requestedCount = requestedCount)
+        return run.copy(id = database.autoWriteRunDao().insert(run))
+    }
+
+    suspend fun updateAutoWriteRun(run: AutoWriteRun, completedCount: Int, status: String, detail: String): AutoWriteRun {
+        val updated = run.copy(
+            completedCount = completedCount.coerceIn(0, run.requestedCount),
+            status = status,
+            detail = detail.trim(),
+            updatedAt = System.currentTimeMillis(),
+        )
+        database.autoWriteRunDao().update(updated)
+        return updated
     }
 
     suspend fun addStoryItem(projectId: Long, kind: String, name: String, detail: String, status: String): Long {
