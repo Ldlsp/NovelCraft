@@ -247,6 +247,9 @@ interface AutoWriteRunDao {
 
     @Update
     suspend fun update(run: AutoWriteRun)
+
+    @Query("UPDATE auto_write_runs SET status = 'paused', detail = :detail, updatedAt = :updatedAt WHERE status = 'running'")
+    suspend fun pauseInterruptedRuns(detail: String, updatedAt: Long)
 }
 
 @Dao

@@ -107,6 +107,10 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     val projectProfileSuggestion = MutableStateFlow<ProjectProfileSuggestion?>(null)
     private val outlineCascadePending = MutableStateFlow(false)
 
+    init {
+        viewModelScope.launch { repository.pauseInterruptedAutoWriteRuns() }
+    }
+
     private fun beginGeneration(task: GenerationTask): GenerationRequest? {
         val activeTask = generationTasks.value.firstOrNull()
         if (activeTask != null) {
@@ -809,7 +813,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                     selectedChapterId.value = completed.id
                     val lifecycle = runChapterLifecycle(completed, request)
                     if (!lifecycle.passed) {
-                        currentRun = repository.updateAutoWriteRun(currentRun, currentRun.completedCount, AutoWriteRunStatus.PAUSED, "第${completed.number}章：${lifecycle.message}")
+                        currentRun = repository.updateAutoWriteRun(currentRun, currentRun.completedCount + 1, AutoWriteRunStatus.PAUSED, "第${completed.number}章：${lifecycle.message}")
                         message.value = "第${completed.number}章待处理，批量写作已暂停"
                         return@launch
                     }
@@ -896,11 +900,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         .firstOrNull { ChapterLifecycleStatus.blocksAutomaticWriting(it.lifecycleStatus) }
 
     fun markCurrentChapterQualityRepaired() {
-        val chapter = selectedChapter.value ?: return
-        viewModelScope.launch {
-            repository.markChapterQualityRepaired(chapter)
-            message.value = "已标记本章门禁问题为已处理"
-        }
+        retryCurrentChapterLifecycle()
     }
 
     fun retryCurrentChapterLifecycle() {

@@ -241,6 +241,13 @@ class NovelRepository(private val database: NovelDatabase) {
         return updated
     }
 
+    suspend fun pauseInterruptedAutoWriteRuns() {
+        database.autoWriteRunDao().pauseInterruptedRuns(
+            detail = "应用上次退出时写作尚未结束，可在处理当前章节后继续",
+            updatedAt = System.currentTimeMillis(),
+        )
+    }
+
     suspend fun addStoryItem(projectId: Long, kind: String, name: String, detail: String, status: String): Long {
         return database.storyItemDao().insert(
             StoryItem(projectId = projectId, kind = kind, name = name, detail = detail, status = status),

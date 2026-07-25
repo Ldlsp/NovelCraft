@@ -1364,7 +1364,7 @@ private fun ReviewTab(
         }
         if (chapter?.qualityStatus == ChapterQualityStatus.NEEDS_REPAIR) {
             item {
-                Button(onClick = onMarkQualityRepaired) { Text("确认已修复本章") }
+                Button(onClick = onMarkQualityRepaired) { Text("修复后重新检查") }
             }
         }
         chapter?.let { current ->
