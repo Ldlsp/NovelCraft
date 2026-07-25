@@ -82,6 +82,13 @@ class OpenAiCompatibleClient {
         systemInstruction = "你是中文网文策划编辑。根据作者提供的已写内容和本地设定，只输出本章可执行大纲：目标、冲突升级、关键转折、结尾钩子。使用简短中文分点，不要写正文，不要暴露保密设定。",
     )
 
+    suspend fun generateBeatSheet(config: ModelConfig, context: String): Result<String> = chat(
+        config = config,
+        context = context,
+        temperature = 0.4,
+        systemInstruction = "你是中文网文分镜策划。基于本章计划、锚点和历史信息，只输出 4-7 条按顺序执行的 Beat Sheet。每条必须写明场景/人物动作/信息变化或冲突升级；最后一条必须是具体钩子。不要写正文、分析或 Markdown 标题；不得提前揭露禁区。",
+    )
+
     suspend fun extractStoryMemory(config: ModelConfig, chapterText: String): Result<String> = chat(
         config = config,
         context = chapterText,

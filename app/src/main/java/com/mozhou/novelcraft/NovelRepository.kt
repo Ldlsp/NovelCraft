@@ -58,6 +58,12 @@ class NovelRepository(private val database: NovelDatabase) {
         database.projectDao().touch(chapter.projectId, timestamp)
     }
 
+    suspend fun updateChapterBeatSheet(chapter: Chapter, beatSheet: String) {
+        val timestamp = System.currentTimeMillis()
+        database.chapterDao().update(chapter.copy(beatSheet = beatSheet.trim(), updatedAt = timestamp))
+        database.projectDao().touch(chapter.projectId, timestamp)
+    }
+
     suspend fun addChapter(projectId: Long): Long {
         val number = (database.chapterDao().maxNumber(projectId) ?: 0) + 1
         val timestamp = System.currentTimeMillis()

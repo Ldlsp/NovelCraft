@@ -197,6 +197,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onRenameChapter = viewModel::renameChapter,
                                 onAddChapter = viewModel::addChapter,
                                 onSaveChapterPlan = viewModel::saveChapterPlan,
+                                onSaveBeatSheet = viewModel::saveBeatSheet,
                                 onAddStoryItem = viewModel::addStoryItem,
                                 onUpdateStoryItem = viewModel::updateStoryItem,
                                 onAddAnchor = viewModel::addAnchor,
@@ -204,6 +205,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onExtractMemory = viewModel::extractMemoryFromCurrentChapter,
                                 onGenerate = viewModel::generateContinuation,
                                 onGeneratePlan = viewModel::generateChapterPlan,
+                                onGenerateBeatSheet = viewModel::generateBeatSheet,
                                 onCancelGeneration = viewModel::cancelGeneration,
                             )
                         }
@@ -379,6 +381,7 @@ private fun WorkspaceScreen(
     onRenameChapter: (String) -> Unit,
     onAddChapter: () -> Unit,
     onSaveChapterPlan: (String, Int) -> Unit,
+    onSaveBeatSheet: (String) -> Unit,
     onAddStoryItem: (String, String, String, String) -> Unit,
     onUpdateStoryItem: (StoryItem, String, String, String, String) -> Unit,
     onAddAnchor: (Int, Int, String, String, String, String, String) -> Unit,
@@ -386,6 +389,7 @@ private fun WorkspaceScreen(
     onExtractMemory: () -> Unit,
     onGenerate: () -> Unit,
     onGeneratePlan: () -> Unit,
+    onGenerateBeatSheet: () -> Unit,
     onCancelGeneration: () -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
@@ -400,7 +404,7 @@ private fun WorkspaceScreen(
                 chapters, selectedChapter, contextPacket, config, isGenerating,
                 onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate, onCancelGeneration,
             )
-            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onGeneratePlan, onCancelGeneration, onAddAnchor)
+            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onSaveBeatSheet, onGeneratePlan, onGenerateBeatSheet, onCancelGeneration, onAddAnchor)
             WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, isGenerating, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory)
             WorkspaceTab.REVIEW -> ReviewTab(qualityIssues)
         }
@@ -529,7 +533,9 @@ private fun OutlineTab(
     config: ModelConfig,
     isGenerating: Boolean,
     onSavePlan: (String, Int) -> Unit,
+    onSaveBeatSheet: (String) -> Unit,
     onGeneratePlan: () -> Unit,
+    onGenerateBeatSheet: () -> Unit,
     onCancel: () -> Unit,
     onAddAnchor: (Int, Int, String, String, String, String, String) -> Unit,
 ) {
@@ -554,7 +560,7 @@ private fun OutlineTab(
             }
         }
         selectedChapter?.let { chapter ->
-            item { ChapterPlanEditor(chapter, config, isGenerating, onSavePlan, onGeneratePlan, onCancel) }
+            item { ChapterPlanEditor(chapter, config, isGenerating, onSavePlan, onSaveBeatSheet, onGeneratePlan, onGenerateBeatSheet, onCancel) }
         }
         items(chapters, key = { it.id }) { chapter ->
             Card {
@@ -635,10 +641,13 @@ private fun ChapterPlanEditor(
     config: ModelConfig,
     isGenerating: Boolean,
     onSave: (String, Int) -> Unit,
+    onSaveBeatSheet: (String) -> Unit,
     onGeneratePlan: () -> Unit,
+    onGenerateBeatSheet: () -> Unit,
     onCancel: () -> Unit,
 ) {
     var outline by remember(chapter.id, chapter.outline) { mutableStateOf(chapter.outline) }
+    var beatSheet by remember(chapter.id, chapter.beatSheet) { mutableStateOf(chapter.beatSheet) }
     var target by remember(chapter.id, chapter.targetWordCount) { mutableStateOf(chapter.targetWordCount.takeIf { it > 0 }?.toString().orEmpty()) }
     Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFDF8))) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -664,6 +673,21 @@ private fun ChapterPlanEditor(
                 Icon(if (isGenerating) Icons.Outlined.Close else Icons.Outlined.Lightbulb, null)
                 Spacer(Modifier.width(6.dp))
                 Text(if (isGenerating) "取消生成" else "AI 生成本章计划")
+            }
+            OutlinedTextField(
+                value = beatSheet,
+                onValueChange = { beatSheet = it; onSaveBeatSheet(it) },
+                label = { Text("Beat Sheet：按顺序展开的场景分镜") },
+                minLines = 4,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedButton(
+                onClick = if (isGenerating) onCancel else onGenerateBeatSheet,
+                enabled = isGenerating || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
+            ) {
+                Icon(if (isGenerating) Icons.Outlined.Close else Icons.Outlined.Lightbulb, null)
+                Spacer(Modifier.width(6.dp))
+                Text(if (isGenerating) "取消生成" else "AI 生成分镜")
             }
         }
     }

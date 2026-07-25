@@ -50,6 +50,8 @@ object ContextEngine {
         appendLine("题材：${project.genre}")
         if (project.premise.isNotBlank()) appendLine("核心设定：${project.premise}")
         appendLine("当前章节：第${current.number}章 ${current.title}")
+        if (current.outline.isNotBlank()) appendLine("本章计划：${current.outline}")
+        if (current.beatSheet.isNotBlank()) appendLine("本章分镜（必须按顺序展开，不得跳过）：${current.beatSheet}")
         packet.activeAnchor?.let { anchor ->
             appendLine("当前大纲锚点：第${anchor.startChapter}-${anchor.endChapter}章 ${anchor.title}")
             appendLine("本段核心冲突：${anchor.coreConflict}")

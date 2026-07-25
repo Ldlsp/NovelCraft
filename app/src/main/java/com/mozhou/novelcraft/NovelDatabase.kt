@@ -44,6 +44,7 @@ data class Chapter(
     val title: String,
     val content: String = "",
     val outline: String = "",
+    val beatSheet: String = "",
     val targetWordCount: Int = 0,
     val updatedAt: Long = System.currentTimeMillis(),
 )
@@ -185,7 +186,7 @@ interface StoryEdgeDao {
 
 @Database(
     entities = [NovelProject::class, Chapter::class, StoryItem::class, StoryAnchor::class, StoryEdge::class],
-    version = 3,
+    version = 4,
     exportSchema = false,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -238,11 +239,16 @@ abstract class NovelDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_story_edges_targetItemId ON story_edges(targetItemId)")
             }
         }
+        private val MIGRATION_3_4 = object : Migration(3, 4) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE chapters ADD COLUMN beatSheet TEXT NOT NULL DEFAULT ''")
+            }
+        }
 
         fun create(context: Context): NovelDatabase = Room.databaseBuilder(
             context.applicationContext,
             NovelDatabase::class.java,
             "novelcraft.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
     }
 }

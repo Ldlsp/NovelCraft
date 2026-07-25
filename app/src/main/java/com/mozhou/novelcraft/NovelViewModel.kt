@@ -24,6 +24,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private val saveChapterJobs = mutableMapOf<Long, Job>()
     private var renameChapterJob: Job? = null
     private var savePlanJob: Job? = null
+    private var saveBeatSheetJob: Job? = null
     private var generationJob: Job? = null
     private val pendingChapterContent = mutableMapOf<Long, String>()
 
@@ -174,6 +175,15 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveBeatSheet(beatSheet: String) {
+        val chapter = selectedChapter.value ?: return
+        saveBeatSheetJob?.cancel()
+        saveBeatSheetJob = viewModelScope.launch {
+            delay(500)
+            repository.updateChapterBeatSheet(chapter, beatSheet)
+        }
+    }
+
     fun addStoryItem(kind: String, name: String, detail: String, status: String) {
         val projectId = selectedProjectId.value ?: return
         if (name.isBlank()) {
@@ -315,6 +325,31 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                         message.value = "本章计划已保存，可继续手动调整"
                     },
                     onFailure = { message.value = it.message ?: "生成大纲失败" },
+                )
+            } finally {
+                isGenerating.value = false
+            }
+        }
+    }
+
+    fun generateBeatSheet() {
+        val project = selectedProject.value ?: return
+        val chapter = selectedChapter.value ?: return
+        if (isGenerating.value) return
+        isGenerating.value = true
+        message.value = "正在生成本章分镜..."
+        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value).prompt +
+            "\n请把本章计划拆成按顺序执行的场景分镜。"
+        generationJob = viewModelScope.launch {
+            try {
+                val result = modelClient.generateBeatSheet(modelConfig.value, context)
+                if (!isActive) return@launch
+                result.fold(
+                    onSuccess = { beatSheet ->
+                        repository.updateChapterBeatSheet(chapter, beatSheet)
+                        message.value = "本章分镜已保存，可继续编辑"
+                    },
+                    onFailure = { message.value = it.message ?: "生成分镜失败" },
                 )
             } finally {
                 isGenerating.value = false
