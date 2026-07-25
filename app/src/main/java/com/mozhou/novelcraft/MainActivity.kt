@@ -49,6 +49,7 @@ import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Shapes
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.Text
@@ -66,18 +67,27 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 
-private val Ink = Color(0xFF20211E)
-private val Paper = Color(0xFFF5F2EA)
-private val Red = Color(0xFFB84536)
-private val Teal = Color(0xFF28756B)
-private val Green = Color(0xFF3D7A4B)
-private val Gold = Color(0xFFB58322)
+private val Ink = Color(0xFF1C1C1E)
+private val Paper = Color(0xFFF2F2F7)
+private val SurfaceWhite = Color(0xFFFFFFFF)
+private val Red = Color(0xFF007AFF)
+private val Teal = Color(0xFF34C759)
+private val Green = Color(0xFF30D158)
+private val Gold = Color(0xFFFF9500)
+private val SecondaryLabel = Color(0xFF6D6D72)
+private val IosShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(8.dp),
+    medium = RoundedCornerShape(8.dp),
+    large = RoundedCornerShape(8.dp),
+)
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -121,10 +131,11 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
             secondary = Teal,
             tertiary = Gold,
             background = Paper,
-            surface = Color(0xFFFFFDF8),
+            surface = SurfaceWhite,
             onBackground = Ink,
             onSurface = Ink,
         ),
+        shapes = IosShapes,
     ) {
         Scaffold(
             topBar = {
@@ -266,7 +277,7 @@ private fun AppTopBar(
                 Icon(Icons.Outlined.CloudDone, "本机已保存", tint = Green, modifier = Modifier.padding(end = 16.dp))
             }
         },
-        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = Paper),
+        colors = TopAppBarDefaults.centerAlignedTopAppBarColors(containerColor = SurfaceWhite),
         scrollBehavior = TopAppBarDefaults.pinnedScrollBehavior(rememberTopAppBarState()),
     )
 }
@@ -275,7 +286,7 @@ private fun AppTopBar(
 private fun StatusMessage(text: String, onDismiss: () -> Unit) {
     Card(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFFE5F0ED)),
+        colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F3FF)),
     ) {
         Row(
             Modifier.fillMaxWidth().padding(12.dp),
@@ -302,10 +313,10 @@ private fun ShelfScreen(
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Text("LOCAL-FIRST NOVEL WORKSPACE", color = Red, style = MaterialTheme.typography.labelMedium)
+            Text("本地优先", color = Red, style = MaterialTheme.typography.labelMedium)
             Spacer(Modifier.height(4.dp))
             Text("今天，写哪一章？", style = MaterialTheme.typography.headlineMedium)
-            Text("作品存在本机 SQLite，模型密钥只保存在 Android Keystore。", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+            Text("作品保存在本机 SQLite，模型密钥仅存于 Android Keystore。", color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
         }
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp), modifier = Modifier.fillMaxWidth()) {
@@ -340,7 +351,7 @@ private fun ActionCard(title: String, detail: String, icon: androidx.compose.ui.
             Icon(icon, null, tint = Red)
             Spacer(Modifier.height(6.dp))
             Text(title)
-            Text(detail, style = MaterialTheme.typography.labelSmall, color = Color.Gray, maxLines = 2)
+            Text(detail, style = MaterialTheme.typography.labelSmall, color = SecondaryLabel, maxLines = 2)
         }
     }
 }
@@ -354,9 +365,9 @@ private fun ProjectRow(project: NovelProject, onOpen: (NovelProject) -> Unit) {
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text(project.title, style = MaterialTheme.typography.titleMedium)
-                Text(project.genre, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                Text(project.genre, color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
                 if (project.premise.isNotBlank()) {
-                    Text(project.premise, maxLines = 1, overflow = TextOverflow.Ellipsis, color = Color.Gray, style = MaterialTheme.typography.labelSmall)
+                    Text(project.premise, maxLines = 1, overflow = TextOverflow.Ellipsis, color = SecondaryLabel, style = MaterialTheme.typography.labelSmall)
                 }
             }
             Icon(Icons.Outlined.Book, null, tint = Red)
@@ -520,6 +531,7 @@ private fun WriteTab(
                 enabled = isAutoWriting || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
             ) { Text(if (isAutoWriting) "取消批量" else "批量") }
         }
+        ActionHint("AI 续写会接在当前章节末尾，不会新建下一章；批量会依次新建后续章节；保存会立即写入本机。")
         if (config.baseUrl.isBlank() || config.apiKey.isBlank() || config.model.isBlank()) {
             Text("请先在“我的”填写 Base URL、API Key 与模型名称。", color = Gold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
         }
@@ -541,13 +553,23 @@ private fun WriteTab(
 }
 
 @Composable
+private fun ActionHint(text: String) {
+    Text(
+        text = text,
+        color = SecondaryLabel,
+        style = MaterialTheme.typography.labelSmall,
+        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+    )
+}
+
+@Composable
 private fun ContinueWritingDialog(packet: ContextPacket, onDismiss: () -> Unit, onStart: () -> Unit) {
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text("AI 续写") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("以下本地上下文会随本章发送到你的模型。")
+                Text("会把结果直接接在当前章节正文末尾，不会新建章节。以下本地上下文会随本章发送到你的模型。")
                 ContextSummary(packet)
             }
         },
@@ -646,6 +668,7 @@ private fun OutlineTab(
             Text("章节大纲", style = MaterialTheme.typography.headlineSmall)
             if (project.premise.isNotBlank()) Text(project.premise, color = Color.Gray)
             OutlinedButton(onClick = { reviseDialogVisible = true }, modifier = Modifier.padding(top = 8.dp)) { Text("改纲级联") }
+            ActionHint("改纲级联会标记受影响的章节设定；本章计划与场景分镜只改大纲字段，不会修改正文。")
             if (project.outlineRevisionReport.isNotBlank()) {
                 Text(project.outlineRevisionReport, color = Gold, style = MaterialTheme.typography.labelSmall)
                 Button(onClick = onResolveOutlineCascade) { Text("确认已复核全部待审项") }
@@ -879,6 +902,7 @@ private fun ResourcesTab(
                 Column {
                     Text("人物与伏笔", style = MaterialTheme.typography.headlineSmall)
                     Text("所有资料都会写入本机 SQLite。", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                    ActionHint("书本图标会从当前章节提取人物、伏笔和关系；人物图标用于新增关系；加号用于手动新增资料。")
                 }
                 Row {
                     IconButton(onClick = if (isExtracting) onCancelExtraction else onExtractMemory) { Icon(if (isExtracting) Icons.Outlined.Close else Icons.Outlined.AutoStories, if (isExtracting) "取消知识图谱提取" else "从当前章节提取记忆") }
@@ -1008,6 +1032,7 @@ private fun ReviewTab(
         item {
             Text("发布前检查", style = MaterialTheme.typography.headlineSmall)
             Text("全部是本地、可解释规则。提示不锁定创作，最终决定权始终在作者。", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+            ActionHint("生成修复计划只给出修改建议，不会自动改写正文；确认已修复会清除本章的待修复状态。")
         }
         if (chapter?.qualityStatus == ChapterQualityStatus.NEEDS_REPAIR) {
             item {
@@ -1061,18 +1086,14 @@ private fun AuditRow(pass: Boolean, title: String, detail: String) {
 
 @Composable
 private fun ModelSettingsScreen(config: ModelConfig, onSave: (ModelConfig) -> Unit, onTest: (ModelConfig) -> Unit) {
-    var provider by remember(config) { mutableStateOf(config.provider) }
     var baseUrl by remember(config) { mutableStateOf(config.baseUrl) }
     var apiKey by remember(config) { mutableStateOf(config.apiKey) }
     var model by remember(config) { mutableStateOf(config.model) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
-            Text("YOUR MODEL, YOUR KEY", color = Red, style = MaterialTheme.typography.labelMedium)
-            Text("模型与本机存储", style = MaterialTheme.typography.headlineMedium)
-            Text("API Key 通过 Android Keystore 加密保存，调用时由手机直连 Base URL，服务端不会保存密钥。", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
-        }
-        item {
-            OutlinedTextField(value = provider, onValueChange = { provider = it }, label = { Text("服务商标识") }, modifier = Modifier.fillMaxWidth())
+            Text("模型连接", color = Red, style = MaterialTheme.typography.labelMedium)
+            Text("只填连接信息", style = MaterialTheme.typography.headlineMedium)
+            Text("这里没有提示词输入。API Key 通过 Android Keystore 加密保存，调用时由手机直连 Base URL。", color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
         }
         item {
             OutlinedTextField(value = baseUrl, onValueChange = { baseUrl = it }, label = { Text("Base URL（HTTPS）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
@@ -1084,7 +1105,7 @@ private fun ModelSettingsScreen(config: ModelConfig, onSave: (ModelConfig) -> Un
             OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text("模型名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         }
         item {
-            val current = ModelConfig(provider, baseUrl, apiKey, model)
+            val current = ModelConfig(baseUrl = baseUrl, apiKey = apiKey, model = model)
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { onSave(current) }) {
                     Icon(Icons.Outlined.Key, null)
@@ -1099,6 +1120,7 @@ private fun ModelSettingsScreen(config: ModelConfig, onSave: (ModelConfig) -> Un
                 Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("内置网文工作流", style = MaterialTheme.typography.titleSmall)
                     Text("不需要填写提示词。续写、章节计划、场景分镜、文风提取、知识图谱和修复计划均使用内置模板，并自动带入当前章节、资料卡、大纲锚点与文风档案。", color = Ink, style = MaterialTheme.typography.bodySmall)
+                    ActionHint("保存到本机：加密保存这三项连接信息；测试连接：只验证模型接口是否可用，不会生成任何小说内容。")
                 }
             }
         }

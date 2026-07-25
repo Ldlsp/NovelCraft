@@ -1,7 +1,6 @@
 <resources>
-    <color name="novel_red">#B84536</color>
-    <color name="novel_teal">#28756B</color>
-    <color name="novel_paper">#FFFDF8</color>
-    <color name="novel_ink">#20211E</color>
+    <color name="novel_red">#007AFF</color>
+    <color name="novel_teal">#34C759</color>
+    <color name="novel_paper">#F2F2F7</color>
+    <color name="novel_ink">#1C1C1E</color>
 </resources>
-
