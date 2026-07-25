@@ -26,6 +26,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.FileOpen
+import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Key
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.MenuBook
@@ -106,6 +107,9 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
             destination = MainDestination.WORKSPACE
         }
     }
+    val exporter = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/markdown")) { uri ->
+        if (uri != null) viewModel.exportDocument(uri)
+    }
 
     MaterialTheme(
         colorScheme = MaterialTheme.colorScheme.copy(
@@ -124,6 +128,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                     destination = destination,
                     projectTitle = project?.title,
                     onBack = { destination = MainDestination.SHELF },
+                    onExport = { project?.let { exporter.launch("${it.title}.md") } },
                 )
             },
             bottomBar = {
@@ -211,7 +216,12 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AppTopBar(destination: MainDestination, projectTitle: String?, onBack: () -> Unit) {
+private fun AppTopBar(
+    destination: MainDestination,
+    projectTitle: String?,
+    onBack: () -> Unit,
+    onExport: () -> Unit,
+) {
     val title = when (destination) {
         MainDestination.SHELF -> "墨舟"
         MainDestination.WORKSPACE -> projectTitle ?: "创作"
@@ -226,6 +236,7 @@ private fun AppTopBar(destination: MainDestination, projectTitle: String?, onBac
         },
         actions = {
             if (destination == MainDestination.WORKSPACE) {
+                IconButton(onClick = onExport) { Icon(Icons.Outlined.FileDownload, "导出作品") }
                 Icon(Icons.Outlined.CloudDone, "本机已保存", tint = Green, modifier = Modifier.padding(end = 16.dp))
             }
         },

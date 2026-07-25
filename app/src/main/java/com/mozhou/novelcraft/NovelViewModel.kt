@@ -94,6 +94,36 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun exportDocument(uri: Uri) {
+        val project = selectedProject.value ?: run {
+            message.value = "请先选择要导出的作品"
+            return
+        }
+        val chaptersToExport = chapters.value
+        viewModelScope.launch {
+            runCatching {
+                val markdown = buildString {
+                    appendLine("# ${project.title}")
+                    if (project.genre.isNotBlank()) appendLine("题材：${project.genre}")
+                    if (project.premise.isNotBlank()) appendLine("设定：${project.premise}")
+                    appendLine()
+                    chaptersToExport.forEach { chapter ->
+                        appendLine("## 第${chapter.number}章 ${chapter.title}")
+                        appendLine()
+                        appendLine(chapter.content.trim())
+                        appendLine()
+                    }
+                }
+                getApplication<Application>().contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(markdown) }
+                    ?: error("无法创建导出文件")
+            }.onSuccess {
+                message.value = "已导出《${project.title}》"
+            }.onFailure {
+                message.value = it.message ?: "导出失败"
+            }
+        }
+    }
+
     fun saveChapter(content: String) {
         val chapter = selectedChapter.value ?: return
         saveChapterJob?.cancel()
