@@ -213,6 +213,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onExtractStyleGuide = viewModel::extractStyleGuideFromCurrentChapter,
                                 onCancelGeneration = viewModel::cancelGeneration,
                                 onGenerateRepairPlan = viewModel::generateRepairPlan,
+                                onMarkQualityRepaired = viewModel::markCurrentChapterQualityRepaired,
                             )
                         }
                     }
@@ -402,6 +403,7 @@ private fun WorkspaceScreen(
     onExtractStyleGuide: () -> Unit,
     onCancelGeneration: () -> Unit,
     onGenerateRepairPlan: () -> Unit,
+    onMarkQualityRepaired: () -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
@@ -417,7 +419,7 @@ private fun WorkspaceScreen(
             )
             WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor)
             WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, isGenerating, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory)
-            WorkspaceTab.REVIEW -> ReviewTab(qualityIssues, repairPlan, config, isGenerating, onGenerateRepairPlan, onCancelGeneration)
+            WorkspaceTab.REVIEW -> ReviewTab(selectedChapter, qualityIssues, repairPlan, config, isGenerating, onGenerateRepairPlan, onMarkQualityRepaired, onCancelGeneration)
         }
     }
 }
@@ -444,9 +446,10 @@ private fun WriteTab(
     }
     var draft by remember(chapter.id, chapter.content) { mutableStateOf(chapter.content) }
     var title by remember(chapter.id, chapter.title) { mutableStateOf(chapter.title) }
+    var continueDialogVisible by rememberSaveable { mutableStateOf(false) }
     var autoWriteDialogVisible by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        ChapterRail(chapters, chapter.id, onSelectChapter, onAddChapter)
+        ChapterRail(chapters, chapter.id, onSelectChapter, onAddChapter, enabled = !isGenerating)
         OutlinedTextField(
             value = title,
             onValueChange = { title = it; onRename(it) },
@@ -455,8 +458,9 @@ private fun WriteTab(
             singleLine = true,
         )
         Text(draft.count { !it.isWhitespace() }.toString() + " 字 · 自动保存到 SQLite", color = Color.Gray, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp, bottom = 4.dp))
-        ContextSummary(contextPacket)
-        Spacer(Modifier.height(6.dp))
+        if (chapter.qualityStatus == ChapterQualityStatus.NEEDS_REPAIR) {
+            Text("待修复：${chapter.qualityIssueSummary}", color = Red, style = MaterialTheme.typography.labelSmall)
+        }
         OutlinedTextField(
             value = draft,
             onValueChange = { draft = it; onSave(it) },
@@ -474,7 +478,7 @@ private fun WriteTab(
                 }
             } else {
                 Button(
-                    onClick = onGenerate,
+                    onClick = { continueDialogVisible = true },
                     modifier = Modifier.weight(1f),
                     enabled = config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
                 ) {
@@ -496,8 +500,16 @@ private fun WriteTab(
             Text("请先在“我的”填写 Base URL、API Key 与模型名称。", color = Gold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
         }
     }
+    if (continueDialogVisible) {
+        ContinueWritingDialog(
+            packet = contextPacket,
+            onDismiss = { continueDialogVisible = false },
+            onStart = { onGenerate(); continueDialogVisible = false },
+        )
+    }
     if (autoWriteDialogVisible) {
         AutoWriteDialog(
+            packet = contextPacket,
             onDismiss = { autoWriteDialogVisible = false },
             onStart = { count -> onAutoWrite(count); autoWriteDialogVisible = false },
         )
@@ -505,7 +517,23 @@ private fun WriteTab(
 }
 
 @Composable
-private fun AutoWriteDialog(onDismiss: () -> Unit, onStart: (Int) -> Unit) {
+private fun ContinueWritingDialog(packet: ContextPacket, onDismiss: () -> Unit, onStart: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("AI 续写") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Text("以下本地上下文会随本章发送到你的模型。")
+                ContextSummary(packet)
+            }
+        },
+        confirmButton = { Button(onClick = onStart) { Text("开始续写") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
+}
+
+@Composable
+private fun AutoWriteDialog(packet: ContextPacket, onDismiss: () -> Unit, onStart: (Int) -> Unit) {
     var count by remember { mutableStateOf("1") }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -513,6 +541,7 @@ private fun AutoWriteDialog(onDismiss: () -> Unit, onStart: (Int) -> Unit) {
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 Text("将依次生成新章节；每章出现本地门禁警告会立即停止。")
+                ContextSummary(packet)
                 OutlinedTextField(value = count, onValueChange = { count = it.filter(Char::isDigit) }, label = { Text("章节数，1-5") }, singleLine = true)
             }
         },
@@ -522,7 +551,7 @@ private fun AutoWriteDialog(onDismiss: () -> Unit, onStart: (Int) -> Unit) {
 }
 
 @Composable
-private fun ChapterRail(chapters: List<Chapter>, selectedId: Long, onSelect: (Long) -> Unit, onAdd: () -> Unit) {
+private fun ChapterRail(chapters: List<Chapter>, selectedId: Long, onSelect: (Long) -> Unit, onAdd: () -> Unit, enabled: Boolean) {
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -536,7 +565,7 @@ private fun ChapterRail(chapters: List<Chapter>, selectedId: Long, onSelect: (Lo
             }
         }
         item {
-            IconButton(onClick = onAdd) { Icon(Icons.Outlined.Add, "新建章节") }
+            IconButton(onClick = onAdd, enabled = enabled) { Icon(Icons.Outlined.Add, "新建章节") }
         }
     }
 }
@@ -552,7 +581,7 @@ private fun ContextSummary(packet: ContextPacket) {
             Spacer(Modifier.width(8.dp))
             val names = packet.relevantItems.take(2).joinToString("、") { it.name }
             Text(
-                "上下文：${packet.relevantItems.size} 条设定 · ${packet.relevantChapters.size} 段摘录" + if (names.isBlank()) "" else " · $names",
+                "上下文：${packet.relevantItems.size} 条设定 · ${packet.relevantEdges.size} 条关系 · ${packet.relevantChapters.size} 段摘录" + if (names.isBlank()) "" else " · $names",
                 color = Color.Gray,
                 style = MaterialTheme.typography.labelSmall,
                 maxLines = 1,
@@ -901,17 +930,24 @@ private fun StoryEdgeDialog(
 
 @Composable
 private fun ReviewTab(
+    chapter: Chapter?,
     issues: List<QualityIssue>,
     repairPlan: String?,
     config: ModelConfig,
     isGenerating: Boolean,
     onGenerateRepairPlan: () -> Unit,
+    onMarkQualityRepaired: () -> Unit,
     onCancel: () -> Unit,
 ) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text("发布前检查", style = MaterialTheme.typography.headlineSmall)
             Text("全部是本地、可解释规则。提示不锁定创作，最终决定权始终在作者。", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+        }
+        if (chapter?.qualityStatus == ChapterQualityStatus.NEEDS_REPAIR) {
+            item {
+                Button(onClick = onMarkQualityRepaired) { Text("确认已修复本章") }
+            }
         }
         items(issues) { issue ->
             AuditRow(issue.severity == QualitySeverity.INFO, issue.title, issue.detail)

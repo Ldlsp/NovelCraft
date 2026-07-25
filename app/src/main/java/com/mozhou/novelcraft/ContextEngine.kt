@@ -2,6 +2,7 @@ package com.mozhou.novelcraft
 
 data class ContextPacket(
     val relevantItems: List<StoryItem> = emptyList(),
+    val relevantEdges: List<StoryEdge> = emptyList(),
     val relevantChapters: List<Chapter> = emptyList(),
     val activeAnchor: StoryAnchor? = null,
     val prompt: String = "",
@@ -20,6 +21,7 @@ object ContextEngine {
         chapters: List<Chapter>,
         storyItems: List<StoryItem>,
         anchors: List<StoryAnchor> = emptyList(),
+        edges: List<StoryEdge> = emptyList(),
     ): ContextPacket {
         val query = listOf(project.title, project.premise, current.title, current.content.takeLast(1_600)).joinToString("\n")
         val queryTerms = terms(query)
@@ -41,7 +43,15 @@ object ContextEngine {
             .ifEmpty { chapters.filter { it.number < current.number && it.content.isNotBlank() }.takeLast(2) }
 
         val anchor = anchors.firstOrNull { current.number in it.startChapter..it.endChapter }
-        val packet = ContextPacket(relevantItems, retrievedChapters, anchor)
+        val itemsById = storyItems.associateBy { it.id }
+        val seedItemIds = relevantItems.map { it.id }.toSet()
+        val relevantEdges = edges
+            .filter { it.sourceItemId in seedItemIds || it.targetItemId in seedItemIds }
+            .take(8)
+        val edgeItemIds = relevantEdges.flatMap { listOf(it.sourceItemId, it.targetItemId) }.toSet()
+        val packetItems = (relevantItems + edgeItemIds.mapNotNull(itemsById::get))
+            .distinctBy { it.id }
+        val packet = ContextPacket(packetItems, relevantEdges, retrievedChapters, anchor)
         return packet.copy(prompt = buildPrompt(project, current, packet))
     }
 
@@ -65,6 +75,15 @@ object ContextEngine {
         if (packet.relevantItems.isNotEmpty()) {
             appendLine("必须优先遵守的本地设定：")
             packet.relevantItems.forEach { appendLine("- [${it.kind}] ${it.name}：${it.detail}") }
+        }
+        if (packet.relevantEdges.isNotEmpty()) {
+            val namesById = packet.relevantItems.associateBy({ it.id }, { it.name })
+            appendLine("相关人物与设定关系：")
+            packet.relevantEdges.forEach { edge ->
+                val source = namesById[edge.sourceItemId] ?: "资料#${edge.sourceItemId}"
+                val target = namesById[edge.targetItemId] ?: "资料#${edge.targetItemId}"
+                appendLine("- $source ${edge.relation} $target：${edge.description}")
+            }
         }
         if (packet.relevantChapters.isNotEmpty()) {
             appendLine("相关已写章节摘录：")

@@ -47,8 +47,15 @@ data class Chapter(
     val outline: String = "",
     val beatSheet: String = "",
     val targetWordCount: Int = 0,
+    val qualityStatus: String = ChapterQualityStatus.READY,
+    val qualityIssueSummary: String = "",
     val updatedAt: Long = System.currentTimeMillis(),
 )
+
+object ChapterQualityStatus {
+    const val READY = "ready"
+    const val NEEDS_REPAIR = "needs_repair"
+}
 
 @Entity(
     tableName = "story_items",
@@ -187,7 +194,7 @@ interface StoryEdgeDao {
 
 @Database(
     entities = [NovelProject::class, Chapter::class, StoryItem::class, StoryAnchor::class, StoryEdge::class],
-    version = 5,
+    version = 6,
     exportSchema = false,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -250,11 +257,17 @@ abstract class NovelDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE projects ADD COLUMN styleGuide TEXT NOT NULL DEFAULT ''")
             }
         }
+        private val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE chapters ADD COLUMN qualityStatus TEXT NOT NULL DEFAULT 'ready'")
+                db.execSQL("ALTER TABLE chapters ADD COLUMN qualityIssueSummary TEXT NOT NULL DEFAULT ''")
+            }
+        }
 
         fun create(context: Context): NovelDatabase = Room.databaseBuilder(
             context.applicationContext,
             NovelDatabase::class.java,
             "novelcraft.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build()
     }
 }

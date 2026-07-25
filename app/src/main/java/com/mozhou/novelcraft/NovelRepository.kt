@@ -76,6 +76,27 @@ class NovelRepository(private val database: NovelDatabase) {
         return id
     }
 
+    suspend fun addCompletedChapter(projectId: Long, content: String, qualityStatus: String, qualityIssueSummary: String): Chapter = database.withTransaction {
+        val number = (database.chapterDao().maxNumber(projectId) ?: 0) + 1
+        val timestamp = System.currentTimeMillis()
+        val chapter = Chapter(
+            projectId = projectId,
+            number = number,
+            title = "第${number}章",
+            content = content.trim(),
+            qualityStatus = qualityStatus,
+            qualityIssueSummary = qualityIssueSummary.trim(),
+            updatedAt = timestamp,
+        )
+        val id = database.chapterDao().insert(chapter)
+        database.projectDao().touch(projectId, timestamp)
+        chapter.copy(id = id)
+    }
+
+    suspend fun markChapterQualityRepaired(chapter: Chapter) {
+        database.chapterDao().update(chapter.copy(qualityStatus = ChapterQualityStatus.READY, qualityIssueSummary = "", updatedAt = System.currentTimeMillis()))
+    }
+
     suspend fun addStoryItem(projectId: Long, kind: String, name: String, detail: String, status: String): Long {
         return database.storyItemDao().insert(
             StoryItem(projectId = projectId, kind = kind, name = name, detail = detail, status = status),

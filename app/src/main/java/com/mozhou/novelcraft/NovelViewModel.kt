@@ -16,6 +16,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 
+private data class WritingContextInput(
+    val project: NovelProject?,
+    val chapter: Chapter?,
+    val chapters: List<Chapter>,
+    val items: List<StoryItem>,
+    val anchors: List<StoryAnchor>,
+)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = NovelRepository(NovelDatabase.create(application))
@@ -57,8 +65,12 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         all.firstOrNull { it.id == id } ?: all.firstOrNull()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    val contextPacket = combine(selectedProject, selectedChapter, chapters, storyItems, anchors) { project, chapter, allChapters, items, projectAnchors ->
-        if (project == null || chapter == null) ContextPacket() else ContextEngine.build(project, chapter, allChapters, items, projectAnchors)
+    private val writingContextInput = combine(selectedProject, selectedChapter, chapters, storyItems, anchors) { project, chapter, allChapters, items, projectAnchors ->
+        WritingContextInput(project, chapter, allChapters, items, projectAnchors)
+    }
+
+    val contextPacket = combine(writingContextInput, edges) { input, graphEdges ->
+        if (input.project == null || input.chapter == null) ContextPacket() else ContextEngine.build(input.project, input.chapter, input.chapters, input.items, input.anchors, graphEdges)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextPacket())
 
     val qualityIssues = combine(selectedChapter, storyItems, anchors) { chapter, items, projectAnchors ->
@@ -482,34 +494,45 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                 val workingChapters = chapters.value.toMutableList()
                 repeat(total) { index ->
                     if (!isActive) return@launch
-                    val id = repository.addChapter(project.id)
                     val nextNumber = (workingChapters.maxOfOrNull { it.number } ?: 0) + 1
-                    val target = Chapter(id = id, projectId = project.id, number = nextNumber, title = "第${nextNumber}章")
-                    val context = ContextEngine.build(project, target, workingChapters, storyItems.value, anchors.value).prompt +
+                    val target = Chapter(projectId = project.id, number = nextNumber, title = "第${nextNumber}章")
+                    val context = ContextEngine.build(project, target, workingChapters, storyItems.value, anchors.value, edges.value).prompt +
                         "\n这是批量写作的第${index + 1}/${total} 章。请完整写出本章。"
                     val result = modelClient.writeFullChapter(modelConfig.value, context)
                     if (!isActive) return@launch
                     val body = result.getOrElse {
                         message.value = "自动写作在第${nextNumber}章停止：${it.message ?: "模型请求失败"}"
-                        selectedChapterId.value = id
                         return@launch
                     }
-                    val completed = target.copy(content = body)
-                    val warnings = QualityGate.inspect(completed, storyItems.value, anchors.value)
+                    val generatedDraft = target.copy(content = body)
+                    val warnings = QualityGate.inspect(generatedDraft, storyItems.value, anchors.value)
                         .filter { it.severity == QualitySeverity.WARNING }
-                    repository.updateChapter(target, body)
+                    val completed = repository.addCompletedChapter(
+                        project.id,
+                        body,
+                        if (warnings.isEmpty()) ChapterQualityStatus.READY else ChapterQualityStatus.NEEDS_REPAIR,
+                        warnings.joinToString("；") { it.title },
+                    )
                     workingChapters += completed
-                    selectedChapterId.value = id
+                    selectedChapterId.value = completed.id
                     if (warnings.isNotEmpty()) {
-                        message.value = "第${nextNumber}章已生成但门禁提示 ${warnings.size} 项，自动写作已停止"
+                        message.value = "第${completed.number}章已保存为待修复草稿，门禁提示 ${warnings.size} 项，自动写作已停止"
                         return@launch
                     }
-                    message.value = "已完成第${nextNumber}章（${index + 1}/${total}）"
+                    message.value = "已完成第${completed.number}章（${index + 1}/${total}）"
                 }
                 message.value = "批量写作完成，共生成 ${total} 章"
             } finally {
                 isGenerating.value = false
             }
+        }
+    }
+
+    fun markCurrentChapterQualityRepaired() {
+        val chapter = selectedChapter.value ?: return
+        viewModelScope.launch {
+            repository.markChapterQualityRepaired(chapter)
+            message.value = "已标记本章门禁问题为已处理"
         }
     }
 

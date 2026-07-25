@@ -66,4 +66,19 @@ class ContextAndQualityTest {
 
         assertTrue(issues.any { it.title == "可能提前揭露大纲禁区" })
     }
+
+    @Test
+    fun includesRelevantGraphRelationshipsInWritingContext() {
+        val project = NovelProject(id = 1, title = "Harbor Case", genre = "Mystery", premise = "Lena seeks a Cipher")
+        val chapter = Chapter(projectId = 1, number = 2, title = "Cipher Trail", content = "Lena follows the Cipher into the warehouse.")
+        val lena = StoryItem(id = 10, projectId = 1, kind = "人物", name = "Lena", detail = "Lead investigator")
+        val cipher = StoryItem(id = 11, projectId = 1, kind = "物品", name = "Cipher", detail = "A missing ledger")
+        val edge = StoryEdge(projectId = 1, sourceItemId = lena.id, targetItemId = cipher.id, relation = "linked", description = "Lena protects the Cipher")
+
+        val packet = ContextEngine.build(project, chapter, listOf(chapter), listOf(lena, cipher), edges = listOf(edge))
+
+        assertEquals(edge, packet.relevantEdges.single())
+        assertTrue(packet.prompt.contains("linked"))
+        assertTrue(packet.prompt.contains("Lena"))
+    }
 }
