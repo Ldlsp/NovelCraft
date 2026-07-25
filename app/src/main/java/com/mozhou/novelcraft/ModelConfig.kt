@@ -46,12 +46,6 @@ class ModelPreferences(context: Context) {
 }
 
 class OpenAiCompatibleClient {
-    @Volatile private var activeConnection: HttpURLConnection? = null
-
-    fun cancelActiveRequest() {
-        activeConnection?.disconnect()
-    }
-
     suspend fun test(config: ModelConfig): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             require(config.baseUrl.startsWith("https://")) { "Base URL 必须使用 HTTPS" }
@@ -68,35 +62,39 @@ class OpenAiCompatibleClient {
         }
     }
 
-    suspend fun continueWriting(config: ModelConfig, context: String): Result<String> = chat(
+    suspend fun continueWriting(config: ModelConfig, context: String, request: GenerationRequest? = null): Result<String> = chat(
         config = config,
         context = context,
         temperature = 0.8,
         systemInstruction = "你是中文网文写作助手。只输出可直接接在正文后的小说正文，不输出标题、说明、Markdown 或分析。不得提前揭露尚未解决的核心谜底。",
+        request = request,
     )
 
-    suspend fun generateChapterPlan(config: ModelConfig, context: String): Result<String> = chat(
+    suspend fun generateChapterPlan(config: ModelConfig, context: String, request: GenerationRequest? = null): Result<String> = chat(
         config = config,
         context = context,
         temperature = 0.5,
         systemInstruction = "你是中文网文策划编辑。根据作者提供的已写内容和本地设定，只输出本章可执行大纲：目标、冲突升级、关键转折、结尾钩子。使用简短中文分点，不要写正文，不要暴露保密设定。",
+        request = request,
     )
 
-    suspend fun generateBeatSheet(config: ModelConfig, context: String): Result<String> = chat(
+    suspend fun generateBeatSheet(config: ModelConfig, context: String, request: GenerationRequest? = null): Result<String> = chat(
         config = config,
         context = context,
         temperature = 0.4,
         systemInstruction = "你是中文网文分镜策划。基于本章计划、锚点和历史信息，只输出 4-7 条按顺序执行的 Beat Sheet。每条必须写明场景/人物动作/信息变化或冲突升级；最后一条必须是具体钩子。不要写正文、分析或 Markdown 标题；不得提前揭露禁区。",
+        request = request,
     )
 
-    suspend fun writeFullChapter(config: ModelConfig, context: String): Result<String> = chat(
+    suspend fun writeFullChapter(config: ModelConfig, context: String, request: GenerationRequest? = null): Result<String> = chat(
         config = config,
         context = context,
         temperature = 0.8,
         systemInstruction = "你是中文网文作者。根据上下文、文风、锚点和分镜，输出一章完整纯小说正文（建议不少于 800 字）。只输出正文，不输出标题、说明、Markdown、分析或元信息。不得提前揭露禁区，结尾必须留下具体可继续写的钩子。",
+        request = request,
     )
 
-    suspend fun extractStoryMemory(config: ModelConfig, chapterText: String): Result<String> = chat(
+    suspend fun extractStoryMemory(config: ModelConfig, chapterText: String, request: GenerationRequest? = null): Result<String> = chat(
         config = config,
         context = chapterText,
         temperature = 0.1,
@@ -106,20 +104,23 @@ class OpenAiCompatibleClient {
   "edges":[{"source":"已在items中出现的名称","target":"已在items中出现的名称","relation":"同盟|敌对|位于|持有|隶属|触发|铺垫|师徒|情感","description":"本章证据"}]
 }
 没有可靠信息时返回空数组。每类最多15条，不要把普通路人、泛称或推测当实体。""",
+        request = request,
     )
 
-    suspend fun generateRepairPlan(config: ModelConfig, context: String): Result<String> = chat(
+    suspend fun generateRepairPlan(config: ModelConfig, context: String, request: GenerationRequest? = null): Result<String> = chat(
         config = config,
         context = context,
         temperature = 0.3,
         systemInstruction = "你是中文小说责编。根据给出的章节和已发现的门禁问题，输出最短修复计划：按优先级列出具体要改的段落、修改目标和一个可直接采用的写法方向。不要重写全文，不要输出正文以外的空泛评价，不要建议提前揭露禁区。",
+        request = request,
     )
 
-    suspend fun extractStyleGuide(config: ModelConfig, sample: String): Result<String> = chat(
+    suspend fun extractStyleGuide(config: ModelConfig, sample: String, request: GenerationRequest? = null): Result<String> = chat(
         config = config,
         context = sample,
         temperature = 0.2,
         systemInstruction = "你是中文网文风格编辑。仅根据给出的样章，提取一个可执行的项目文风档案：叙事视角、时态、句长和节奏、对话比例、描写偏好、禁用表达、章末钩子习惯。用紧凑中文分点，不评价原文，不仿照在世作者，不输出小说正文。",
+        request = request,
     )
 
     private suspend fun chat(
@@ -127,6 +128,7 @@ class OpenAiCompatibleClient {
         context: String,
         temperature: Double,
         systemInstruction: String,
+        request: GenerationRequest? = null,
     ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             require(config.baseUrl.startsWith("https://")) { "Base URL 必须使用 HTTPS" }
@@ -141,7 +143,7 @@ class OpenAiCompatibleClient {
                 })
             }.toString()
             val connection = URL(config.baseUrl.trimEnd('/') + "/chat/completions").openConnection() as HttpURLConnection
-            activeConnection = connection
+            request?.connection = connection
             try {
                 connection.requestMethod = "POST"
                 connection.doOutput = true
@@ -157,7 +159,7 @@ class OpenAiCompatibleClient {
                 JSONObject(response).getJSONArray("choices").getJSONObject(0)
                     .getJSONObject("message").getString("content").trim()
             } finally {
-                if (activeConnection === connection) activeConnection = null
+                if (request?.connection === connection) request.connection = null
                 connection.disconnect()
             }
         }

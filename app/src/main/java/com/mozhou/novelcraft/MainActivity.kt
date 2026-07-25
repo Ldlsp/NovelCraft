@@ -193,7 +193,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 qualityIssues = qualityIssues,
                                 repairPlan = repairPlan,
                                 config = modelConfig,
-                                isGenerating = viewModel.isGenerating.collectAsStateWithLifecycle().value,
+                                activeTasks = viewModel.generationTasks.collectAsStateWithLifecycle().value,
                                 onSelectChapter = viewModel::selectChapter,
                                 onSaveChapter = viewModel::saveChapter,
                                 onRenameChapter = viewModel::renameChapter,
@@ -385,7 +385,7 @@ private fun WorkspaceScreen(
     qualityIssues: List<QualityIssue>,
     repairPlan: String?,
     config: ModelConfig,
-    isGenerating: Boolean,
+    activeTasks: Set<GenerationTask>,
     onSelectChapter: (Long) -> Unit,
     onSaveChapter: (String) -> Unit,
     onRenameChapter: (String) -> Unit,
@@ -403,7 +403,7 @@ private fun WorkspaceScreen(
     onGeneratePlan: () -> Unit,
     onGenerateBeatSheet: () -> Unit,
     onExtractStyleGuide: () -> Unit,
-    onCancelGeneration: () -> Unit,
+    onCancelGeneration: (GenerationTask) -> Unit,
     onGenerateRepairPlan: () -> Unit,
     onMarkQualityRepaired: () -> Unit,
     onReviseOutline: (Int, String) -> Unit,
@@ -411,6 +411,7 @@ private fun WorkspaceScreen(
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
+        GenerationTaskBar(activeTasks, onCancelGeneration)
         TabRow(selectedTabIndex = selectedTab) {
             WorkspaceTab.entries.forEachIndexed { index, tab ->
                 Tab(selected = selectedTab == index, onClick = { selectedTab = index }, text = { Text(tab.label) })
@@ -418,12 +419,29 @@ private fun WorkspaceScreen(
         }
         when (WorkspaceTab.entries[selectedTab]) {
             WorkspaceTab.WRITE -> WriteTab(
-                chapters, selectedChapter, contextPacket, config, isGenerating,
+                chapters, selectedChapter, contextPacket, config, activeTasks,
                 onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate, onAutoWrite, onCancelGeneration,
             )
-            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor, onReviseOutline, onResolveOutlineCascade)
-            WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, isGenerating, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory)
-            WorkspaceTab.REVIEW -> ReviewTab(selectedChapter, qualityIssues, repairPlan, config, isGenerating, onGenerateRepairPlan, onMarkQualityRepaired, onCancelGeneration)
+            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, activeTasks, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor, onReviseOutline, onResolveOutlineCascade)
+            WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, GenerationTask.MEMORY_EXTRACTION in activeTasks, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory, { onCancelGeneration(GenerationTask.MEMORY_EXTRACTION) })
+            WorkspaceTab.REVIEW -> ReviewTab(selectedChapter, qualityIssues, repairPlan, config, GenerationTask.REPAIR_PLAN in activeTasks, onGenerateRepairPlan, onMarkQualityRepaired, { onCancelGeneration(GenerationTask.REPAIR_PLAN) })
+        }
+    }
+}
+
+@Composable
+private fun GenerationTaskBar(activeTasks: Set<GenerationTask>, onCancel: (GenerationTask) -> Unit) {
+    if (activeTasks.isEmpty()) return
+    LazyRow(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        items(activeTasks.sortedBy { it.ordinal }, key = { it.name }) { task ->
+            OutlinedButton(onClick = { onCancel(task) }) {
+                Icon(Icons.Outlined.Close, null, modifier = Modifier.width(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("${task.label}中")
+            }
         }
     }
 }
@@ -435,14 +453,14 @@ private fun WriteTab(
     chapter: Chapter?,
     contextPacket: ContextPacket,
     config: ModelConfig,
-    isGenerating: Boolean,
+    activeTasks: Set<GenerationTask>,
     onSelectChapter: (Long) -> Unit,
     onSave: (String) -> Unit,
     onRename: (String) -> Unit,
     onAddChapter: () -> Unit,
     onGenerate: () -> Unit,
     onAutoWrite: (Int) -> Unit,
-    onCancel: () -> Unit,
+    onCancel: (GenerationTask) -> Unit,
 ) {
     if (chapter == null) {
         EmptyWorkspace()
@@ -452,8 +470,10 @@ private fun WriteTab(
     var title by remember(chapter.id, chapter.title) { mutableStateOf(chapter.title) }
     var continueDialogVisible by rememberSaveable { mutableStateOf(false) }
     var autoWriteDialogVisible by rememberSaveable { mutableStateOf(false) }
+    val isContinuing = GenerationTask.CONTINUATION in activeTasks
+    val isAutoWriting = GenerationTask.AUTO_WRITE in activeTasks
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        ChapterRail(chapters, chapter.id, onSelectChapter, onAddChapter, enabled = !isGenerating)
+        ChapterRail(chapters, chapter.id, onSelectChapter, onAddChapter, enabled = true)
         OutlinedTextField(
             value = title,
             onValueChange = { title = it; onRename(it) },
@@ -474,8 +494,8 @@ private fun WriteTab(
         )
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            if (isGenerating) {
-                Button(onClick = onCancel, modifier = Modifier.weight(1f)) {
+            if (isContinuing) {
+                Button(onClick = { onCancel(GenerationTask.CONTINUATION) }, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Outlined.Close, null)
                     Spacer(Modifier.width(6.dp))
                     Text("取消")
@@ -495,10 +515,10 @@ private fun WriteTab(
                 Icon(Icons.Outlined.Save, "保存", tint = Red)
             }
             OutlinedButton(
-                onClick = { autoWriteDialogVisible = true },
+                onClick = { if (isAutoWriting) onCancel(GenerationTask.AUTO_WRITE) else autoWriteDialogVisible = true },
                 modifier = Modifier.width(86.dp),
-                enabled = !isGenerating && config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
-            ) { Text("批量") }
+                enabled = isAutoWriting || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
+            ) { Text(if (isAutoWriting) "取消批量" else "批量") }
         }
         if (config.baseUrl.isBlank() || config.apiKey.isBlank() || config.model.isBlank()) {
             Text("请先在“我的”填写 Base URL、API Key 与模型名称。", color = Gold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
@@ -603,32 +623,35 @@ private fun OutlineTab(
     selectedChapter: Chapter?,
     anchors: List<StoryAnchor>,
     config: ModelConfig,
-    isGenerating: Boolean,
+    activeTasks: Set<GenerationTask>,
     onSavePlan: (String, Int) -> Unit,
     onSaveBeatSheet: (String) -> Unit,
     onSaveStyleGuide: (String) -> Unit,
     onGeneratePlan: () -> Unit,
     onGenerateBeatSheet: () -> Unit,
     onExtractStyleGuide: () -> Unit,
-    onCancel: () -> Unit,
+    onCancel: (GenerationTask) -> Unit,
     onAddAnchor: (Int, Int, String, String, String, String, String) -> Unit,
     onReviseOutline: (Int, String) -> Unit,
     onResolveOutlineCascade: () -> Unit,
 ) {
     var anchorDialogVisible by rememberSaveable { mutableStateOf(false) }
     var reviseDialogVisible by rememberSaveable { mutableStateOf(false) }
+    val isStyleGenerating = GenerationTask.STYLE_GUIDE in activeTasks
+    val isPlanGenerating = GenerationTask.CHAPTER_PLAN in activeTasks
+    val isBeatGenerating = GenerationTask.BEAT_SHEET in activeTasks
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text(project.genre + " · " + project.title, color = Red, style = MaterialTheme.typography.labelMedium)
             Text("章节大纲", style = MaterialTheme.typography.headlineSmall)
             if (project.premise.isNotBlank()) Text(project.premise, color = Color.Gray)
-            OutlinedButton(onClick = { reviseDialogVisible = true }, enabled = !isGenerating, modifier = Modifier.padding(top = 8.dp)) { Text("改纲级联") }
+            OutlinedButton(onClick = { reviseDialogVisible = true }, modifier = Modifier.padding(top = 8.dp)) { Text("改纲级联") }
             if (project.outlineRevisionReport.isNotBlank()) {
                 Text(project.outlineRevisionReport, color = Gold, style = MaterialTheme.typography.labelSmall)
                 Button(onClick = onResolveOutlineCascade) { Text("确认已复核全部待审项") }
             }
         }
-        item { StyleGuideEditor(project.styleGuide, config, isGenerating, onSaveStyleGuide, onExtractStyleGuide, onCancel) }
+        item { StyleGuideEditor(project.styleGuide, config, isStyleGenerating, onSaveStyleGuide, onExtractStyleGuide, { onCancel(GenerationTask.STYLE_GUIDE) }) }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("大纲锚点", style = MaterialTheme.typography.titleMedium)
@@ -643,7 +666,7 @@ private fun OutlineTab(
             }
         }
         selectedChapter?.let { chapter ->
-            item { ChapterPlanEditor(chapter, config, isGenerating, onSavePlan, onSaveBeatSheet, onGeneratePlan, onGenerateBeatSheet, onCancel) }
+            item { ChapterPlanEditor(chapter, config, isPlanGenerating, isBeatGenerating, onSavePlan, onSaveBeatSheet, onGeneratePlan, onGenerateBeatSheet, { onCancel(GenerationTask.CHAPTER_PLAN) }, { onCancel(GenerationTask.BEAT_SHEET) }) }
         }
         items(chapters, key = { it.id }) { chapter ->
             Card {
@@ -779,12 +802,14 @@ private fun StyleGuideEditor(
 private fun ChapterPlanEditor(
     chapter: Chapter,
     config: ModelConfig,
-    isGenerating: Boolean,
+    isPlanGenerating: Boolean,
+    isBeatGenerating: Boolean,
     onSave: (String, Int) -> Unit,
     onSaveBeatSheet: (String) -> Unit,
     onGeneratePlan: () -> Unit,
     onGenerateBeatSheet: () -> Unit,
-    onCancel: () -> Unit,
+    onCancelPlan: () -> Unit,
+    onCancelBeat: () -> Unit,
 ) {
     var outline by remember(chapter.id, chapter.outline) { mutableStateOf(chapter.outline) }
     var beatSheet by remember(chapter.id, chapter.beatSheet) { mutableStateOf(chapter.beatSheet) }
@@ -807,12 +832,12 @@ private fun ChapterPlanEditor(
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedButton(
-                onClick = if (isGenerating) onCancel else onGeneratePlan,
-                enabled = isGenerating || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
+                onClick = if (isPlanGenerating) onCancelPlan else onGeneratePlan,
+                enabled = isPlanGenerating || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
             ) {
-                Icon(if (isGenerating) Icons.Outlined.Close else Icons.Outlined.Lightbulb, null)
+                Icon(if (isPlanGenerating) Icons.Outlined.Close else Icons.Outlined.Lightbulb, null)
                 Spacer(Modifier.width(6.dp))
-                Text(if (isGenerating) "取消生成" else "AI 生成本章计划")
+                Text(if (isPlanGenerating) "取消本章计划" else "AI 生成本章计划")
             }
             OutlinedTextField(
                 value = beatSheet,
@@ -822,12 +847,12 @@ private fun ChapterPlanEditor(
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedButton(
-                onClick = if (isGenerating) onCancel else onGenerateBeatSheet,
-                enabled = isGenerating || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
+                onClick = if (isBeatGenerating) onCancelBeat else onGenerateBeatSheet,
+                enabled = isBeatGenerating || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
             ) {
-                Icon(if (isGenerating) Icons.Outlined.Close else Icons.Outlined.Lightbulb, null)
+                Icon(if (isBeatGenerating) Icons.Outlined.Close else Icons.Outlined.Lightbulb, null)
                 Spacer(Modifier.width(6.dp))
-                Text(if (isGenerating) "取消生成" else "AI 生成分镜")
+                Text(if (isBeatGenerating) "取消分镜" else "AI 生成分镜")
             }
         }
     }
@@ -838,11 +863,12 @@ private fun ChapterPlanEditor(
 private fun ResourcesTab(
     items: List<StoryItem>,
     edges: List<StoryEdge>,
-    isGenerating: Boolean,
+    isExtracting: Boolean,
     onAdd: (String, String, String, String) -> Unit,
     onUpdate: (StoryItem, String, String, String, String) -> Unit,
     onAddEdge: (Long, Long, String, String, Int) -> Unit,
     onExtractMemory: () -> Unit,
+    onCancelExtraction: () -> Unit,
 ) {
     var dialogVisible by rememberSaveable { mutableStateOf(false) }
     var editItem by remember { mutableStateOf<StoryItem?>(null) }
@@ -855,7 +881,7 @@ private fun ResourcesTab(
                     Text("所有资料都会写入本机 SQLite。", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                 }
                 Row {
-                    IconButton(onClick = onExtractMemory, enabled = !isGenerating) { Icon(Icons.Outlined.AutoStories, "从当前章节提取记忆") }
+                    IconButton(onClick = if (isExtracting) onCancelExtraction else onExtractMemory) { Icon(if (isExtracting) Icons.Outlined.Close else Icons.Outlined.AutoStories, if (isExtracting) "取消知识图谱提取" else "从当前章节提取记忆") }
                     IconButton(onClick = { edgeDialogVisible = true }, enabled = items.size >= 2) { Icon(Icons.Outlined.People, "添加关系") }
                     IconButton(onClick = { dialogVisible = true }) { Icon(Icons.Outlined.Add, "添加资料") }
                 }
@@ -1066,6 +1092,14 @@ private fun ModelSettingsScreen(config: ModelConfig, onSave: (ModelConfig) -> Un
                     Text("保存到本机")
                 }
                 OutlinedButton(onClick = { onTest(current) }) { Text("测试连接") }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF4DA))) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("内置网文工作流", style = MaterialTheme.typography.titleSmall)
+                    Text("不需要填写提示词。续写、章节计划、场景分镜、文风提取、知识图谱和修复计划均使用内置模板，并自动带入当前章节、资料卡、大纲锚点与文风档案。", color = Ink, style = MaterialTheme.typography.bodySmall)
+                }
             }
         }
         item {

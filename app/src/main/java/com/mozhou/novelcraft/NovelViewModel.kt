@@ -34,7 +34,8 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private var savePlanJob: Job? = null
     private var saveBeatSheetJob: Job? = null
     private var saveStyleJob: Job? = null
-    private var generationJob: Job? = null
+    private val generationJobs = mutableMapOf<GenerationTask, Job>()
+    private val generationRequests = mutableMapOf<GenerationTask, GenerationRequest>()
     private val pendingChapterContent = mutableMapOf<Long, String>()
 
     val projects = repository.projects().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -79,9 +80,27 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
 
     val modelConfig = MutableStateFlow(modelPreferences.load())
     val message = MutableStateFlow<String?>(null)
-    val isGenerating = MutableStateFlow(false)
+    val generationTasks = MutableStateFlow<Set<GenerationTask>>(emptySet())
     val repairPlan = MutableStateFlow<String?>(null)
     private val outlineCascadePending = MutableStateFlow(false)
+
+    private fun beginGeneration(task: GenerationTask): GenerationRequest? {
+        if (task in generationTasks.value) {
+            message.value = "${task.label}正在生成"
+            return null
+        }
+        return GenerationRequest().also { request ->
+            generationRequests[task] = request
+            generationTasks.value = generationTasks.value + task
+        }
+    }
+
+    private fun finishGeneration(task: GenerationTask, request: GenerationRequest) {
+        if (generationRequests[task] !== request) return
+        generationRequests.remove(task)
+        generationJobs.remove(task)
+        generationTasks.value = generationTasks.value - task
+    }
 
     fun selectProject(projectId: Long) {
         selectedProjectId.value = projectId
@@ -266,18 +285,17 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
 
     fun extractMemoryFromCurrentChapter() {
         val chapter = selectedChapter.value ?: return
-        if (isGenerating.value) return
         val content = pendingChapterContent[chapter.id] ?: chapter.content
         if (content.isBlank()) {
             message.value = "本章还没有正文，无法提取记忆"
             return
         }
-        isGenerating.value = true
+        val request = beginGeneration(GenerationTask.MEMORY_EXTRACTION) ?: return
         message.value = "正在从本章提取知识图谱..."
         val extractionInput = "第${chapter.number}章 ${chapter.title}\n$content"
-        generationJob = viewModelScope.launch {
+        generationJobs[GenerationTask.MEMORY_EXTRACTION] = viewModelScope.launch {
             try {
-                val result = modelClient.extractStoryMemory(modelConfig.value, extractionInput)
+                val result = modelClient.extractStoryMemory(modelConfig.value, extractionInput, request)
                 if (!isActive) return@launch
                 result.fold(
                     onSuccess = { raw ->
@@ -326,7 +344,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                     onFailure = { message.value = it.message ?: "提取记忆失败" },
                 )
             } finally {
-                isGenerating.value = false
+                finishGeneration(GenerationTask.MEMORY_EXTRACTION, request)
             }
         }
     }
@@ -334,18 +352,17 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     fun generateRepairPlan() {
         val project = selectedProject.value ?: return
         val chapter = selectedChapter.value ?: return
-        if (isGenerating.value) return
         val issues = QualityGate.inspect(chapter, storyItems.value, anchors.value)
-        isGenerating.value = true
+        val request = beginGeneration(GenerationTask.REPAIR_PLAN) ?: return
         message.value = "正在生成最短修复计划..."
         val context = buildString {
             append(ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value).prompt)
             appendLine("\n门禁问题：")
             issues.forEach { appendLine("- ${it.title}：${it.detail}") }
         }
-        generationJob = viewModelScope.launch {
+        generationJobs[GenerationTask.REPAIR_PLAN] = viewModelScope.launch {
             try {
-                val result = modelClient.generateRepairPlan(modelConfig.value, context)
+                val result = modelClient.generateRepairPlan(modelConfig.value, context, request)
                 if (!isActive) return@launch
                 result.fold(
                     onSuccess = { plan ->
@@ -355,7 +372,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                     onFailure = { message.value = it.message ?: "生成修复计划失败" },
                 )
             } finally {
-                isGenerating.value = false
+                finishGeneration(GenerationTask.REPAIR_PLAN, request)
             }
         }
     }
@@ -363,14 +380,13 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     fun generateChapterPlan() {
         val project = selectedProject.value ?: return
         val chapter = selectedChapter.value ?: return
-        if (isGenerating.value) return
-        isGenerating.value = true
+        val request = beginGeneration(GenerationTask.CHAPTER_PLAN) ?: return
         message.value = "正在根据本地记忆生成本章计划..."
         val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value).prompt +
             "\n请为当前章节生成大纲，覆盖冲突、转折和结尾钩子。"
-        generationJob = viewModelScope.launch {
+        generationJobs[GenerationTask.CHAPTER_PLAN] = viewModelScope.launch {
             try {
-                val result = modelClient.generateChapterPlan(modelConfig.value, context)
+                val result = modelClient.generateChapterPlan(modelConfig.value, context, request)
                 if (!isActive) return@launch
                 result.fold(
                     onSuccess = { outline ->
@@ -380,7 +396,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                     onFailure = { message.value = it.message ?: "生成大纲失败" },
                 )
             } finally {
-                isGenerating.value = false
+                finishGeneration(GenerationTask.CHAPTER_PLAN, request)
             }
         }
     }
@@ -388,14 +404,13 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     fun generateBeatSheet() {
         val project = selectedProject.value ?: return
         val chapter = selectedChapter.value ?: return
-        if (isGenerating.value) return
-        isGenerating.value = true
+        val request = beginGeneration(GenerationTask.BEAT_SHEET) ?: return
         message.value = "正在生成本章分镜..."
         val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value).prompt +
             "\n请把本章计划拆成按顺序执行的场景分镜。"
-        generationJob = viewModelScope.launch {
+        generationJobs[GenerationTask.BEAT_SHEET] = viewModelScope.launch {
             try {
-                val result = modelClient.generateBeatSheet(modelConfig.value, context)
+                val result = modelClient.generateBeatSheet(modelConfig.value, context, request)
                 if (!isActive) return@launch
                 result.fold(
                     onSuccess = { beatSheet ->
@@ -405,7 +420,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                     onFailure = { message.value = it.message ?: "生成分镜失败" },
                 )
             } finally {
-                isGenerating.value = false
+                finishGeneration(GenerationTask.BEAT_SHEET, request)
             }
         }
     }
@@ -418,12 +433,11 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
             message.value = "样章至少需要 200 字才能提取文风"
             return
         }
-        if (isGenerating.value) return
-        isGenerating.value = true
+        val request = beginGeneration(GenerationTask.STYLE_GUIDE) ?: return
         message.value = "正在提取项目文风..."
-        generationJob = viewModelScope.launch {
+        generationJobs[GenerationTask.STYLE_GUIDE] = viewModelScope.launch {
             try {
-                val result = modelClient.extractStyleGuide(modelConfig.value, sample.take(8_000))
+                val result = modelClient.extractStyleGuide(modelConfig.value, sample.take(8_000), request)
                 if (!isActive) return@launch
                 result.fold(
                     onSuccess = { styleGuide ->
@@ -433,7 +447,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                     onFailure = { message.value = it.message ?: "提取文风失败" },
                 )
             } finally {
-                isGenerating.value = false
+                finishGeneration(GenerationTask.STYLE_GUIDE, request)
             }
         }
     }
@@ -457,16 +471,15 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     fun generateContinuation() {
         val project = selectedProject.value ?: return
         val chapter = selectedChapter.value ?: return
-        if (isGenerating.value) return
         if (hasPendingCascade()) { message.value = "改纲待审项尚未复核，暂不能继续写作"; return }
         val sourceContent = pendingChapterContent[chapter.id] ?: chapter.content
         val sourceChapter = chapter.copy(content = sourceContent)
-        isGenerating.value = true
+        val request = beginGeneration(GenerationTask.CONTINUATION) ?: return
         message.value = "正在直接请求你的模型..."
         val writingContext = ContextEngine.build(project, sourceChapter, chapters.value, storyItems.value, anchors.value).prompt
-        generationJob = viewModelScope.launch {
+        generationJobs[GenerationTask.CONTINUATION] = viewModelScope.launch {
             try {
-                val result = modelClient.continueWriting(modelConfig.value, writingContext)
+                val result = modelClient.continueWriting(modelConfig.value, writingContext, request)
                 if (!isActive) return@launch
                 result.fold(
                     onSuccess = { generated ->
@@ -480,19 +493,18 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                     onFailure = { message.value = it.message ?: "续写失败" },
                 )
             } finally {
-                isGenerating.value = false
+                finishGeneration(GenerationTask.CONTINUATION, request)
             }
         }
     }
 
     fun autoWriteChapters(count: Int) {
         val project = selectedProject.value ?: return
-        if (isGenerating.value) return
         if (hasPendingCascade()) { message.value = "改纲待审项尚未复核，暂不能批量写作"; return }
         val total = count.coerceIn(1, 5)
-        isGenerating.value = true
+        val request = beginGeneration(GenerationTask.AUTO_WRITE) ?: return
         message.value = "自动写作已启动：准备生成 $total 章"
-        generationJob = viewModelScope.launch {
+        generationJobs[GenerationTask.AUTO_WRITE] = viewModelScope.launch {
             try {
                 val workingChapters = chapters.value.toMutableList()
                 repeat(total) { index ->
@@ -501,7 +513,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                     val target = Chapter(projectId = project.id, number = nextNumber, title = "第${nextNumber}章")
                     val context = ContextEngine.build(project, target, workingChapters, storyItems.value, anchors.value, edges.value).prompt +
                         "\n这是批量写作的第${index + 1}/${total} 章。请完整写出本章。"
-                    val result = modelClient.writeFullChapter(modelConfig.value, context)
+                    val result = modelClient.writeFullChapter(modelConfig.value, context, request)
                     if (!isActive) return@launch
                     val body = result.getOrElse {
                         message.value = "自动写作在第${nextNumber}章停止：${it.message ?: "模型请求失败"}"
@@ -526,14 +538,13 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 message.value = "批量写作完成，共生成 ${total} 章"
             } finally {
-                isGenerating.value = false
+                finishGeneration(GenerationTask.AUTO_WRITE, request)
             }
         }
     }
 
     fun reviseOutline(fromChapter: Int, description: String) {
         val project = selectedProject.value ?: return
-        if (isGenerating.value) { message.value = "生成进行中，请取消或等待完成后再改纲"; return }
         outlineCascadePending.value = true
         val report = OutlineCascadeAnalyzer.analyze(fromChapter, chapters.value, storyItems.value, anchors.value, edges.value, description)
         viewModelScope.launch {
@@ -561,12 +572,12 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun cancelGeneration() {
-        if (!isGenerating.value) return
-        modelClient.cancelActiveRequest()
-        generationJob?.cancel()
-        isGenerating.value = false
-        message.value = "已取消模型请求，正文未改动"
+    fun cancelGeneration(task: GenerationTask) {
+        if (task !in generationTasks.value) return
+        generationRequests[task]?.cancel()
+        generationJobs[task]?.cancel()
+        finishGeneration(task, generationRequests[task] ?: return)
+        message.value = "已取消${task.label}，其他任务继续运行"
     }
 
     fun clearMessage() {
