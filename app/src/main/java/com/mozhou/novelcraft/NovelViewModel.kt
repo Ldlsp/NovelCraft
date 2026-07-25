@@ -25,6 +25,15 @@ private data class WritingContextInput(
     val anchors: List<StoryAnchor>,
 )
 
+data class ProjectProfileSuggestion(
+    val genre: String,
+    val premise: String,
+    val summary: String,
+    val tags: String,
+    val targetAudience: String,
+    val protagonistName: String,
+)
+
 @OptIn(ExperimentalCoroutinesApi::class)
 class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = NovelRepository(NovelDatabase.create(application))
@@ -83,6 +92,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     val message = MutableStateFlow<String?>(null)
     val generationTasks = MutableStateFlow<Set<GenerationTask>>(emptySet())
     val repairPlan = MutableStateFlow<String?>(null)
+    val projectProfileSuggestion = MutableStateFlow<ProjectProfileSuggestion?>(null)
     private val outlineCascadePending = MutableStateFlow(false)
 
     private fun beginGeneration(task: GenerationTask): GenerationRequest? {
@@ -106,6 +116,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     fun selectProject(projectId: Long) {
         selectedProjectId.value = projectId
         selectedChapterId.value = null
+        projectProfileSuggestion.value = null
     }
 
     fun selectChapter(chapterId: Long) {
@@ -251,6 +262,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun saveProjectProfile(
+        title: String,
         genre: String,
         premise: String,
         summary: String,
@@ -260,7 +272,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val project = selectedProject.value ?: return
         viewModelScope.launch {
-            repository.updateProjectProfile(project, genre, premise, summary, tags, targetAudience, protagonistName)
+            repository.updateProjectProfile(project, title, genre, premise, summary, tags, targetAudience, protagonistName)
             message.value = "作品资料已保存"
         }
     }
@@ -293,6 +305,82 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                 )
             } finally {
                 finishGeneration(GenerationTask.COVER, request)
+            }
+        }
+    }
+
+    fun importCover(uri: Uri) {
+        val project = selectedProject.value ?: return
+        viewModelScope.launch {
+            runCatching {
+                val resolver = getApplication<Application>().contentResolver
+                val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, options) }
+                    ?: error("无法读取选择的图片")
+                require(options.outWidth > 0 && options.outHeight > 0) { "请选择有效的图片文件" }
+                val extension = when (resolver.getType(uri)) {
+                    "image/jpeg" -> "jpg"
+                    "image/webp" -> "webp"
+                    else -> "png"
+                }
+                val folder = File(getApplication<Application>().filesDir, "covers").apply { mkdirs() }
+                val destination = File(folder, "cover-${project.id}.$extension")
+                resolver.openInputStream(uri)?.use { input ->
+                    destination.outputStream().use(input::copyTo)
+                } ?: error("无法复制选择的图片")
+                repository.updateCover(project, destination.absolutePath)
+            }.onSuccess {
+                message.value = "已使用本地图片作为书架封面"
+            }.onFailure {
+                message.value = it.message ?: "上传封面失败"
+            }
+        }
+    }
+
+    fun testImageModelConfig(config: ModelConfig) {
+        viewModelScope.launch {
+            message.value = "正在测试封面 AI..."
+            modelClient.testImage(config).fold(
+                onSuccess = { message.value = it },
+                onFailure = { message.value = it.message ?: "封面 AI 测试失败" },
+            )
+        }
+    }
+
+    fun generateProjectProfile() {
+        val project = selectedProject.value ?: return
+        val request = beginGeneration(GenerationTask.PROJECT_PROFILE) ?: return
+        message.value = "正在补全作品设定..."
+        val context = buildString {
+            appendLine("书名：${project.title}")
+            if (project.genre.isNotBlank()) appendLine("已有题材：${project.genre}")
+            if (project.premise.isNotBlank()) appendLine("已有一句话设定：${project.premise}")
+            if (project.summary.isNotBlank()) appendLine("已有简介：${project.summary}")
+            if (project.tags.isNotBlank()) appendLine("已有标签：${project.tags}")
+            if (project.targetAudience.isNotBlank()) appendLine("已有目标读者：${project.targetAudience}")
+            if (project.protagonistName.isNotBlank()) appendLine("已有主角名：${project.protagonistName}")
+        }
+        generationJobs[GenerationTask.PROJECT_PROFILE] = viewModelScope.launch {
+            try {
+                modelClient.generateProjectProfile(modelConfig.value, context, request).fold(
+                    onSuccess = { raw ->
+                        val json = org.json.JSONObject(raw.trim().removePrefix("```json").removeSuffix("```").trim())
+                        projectProfileSuggestion.value = ProjectProfileSuggestion(
+                            genre = json.optString("genre").trim(),
+                            premise = json.optString("premise").trim(),
+                            summary = json.optString("summary").trim(),
+                            tags = json.optString("tags").trim(),
+                            targetAudience = json.optString("targetAudience").trim(),
+                            protagonistName = json.optString("protagonistName").trim(),
+                        )
+                        message.value = "作品设定已生成，请确认后保存"
+                    },
+                    onFailure = { message.value = it.message ?: "生成作品设定失败" },
+                )
+            } catch (_: Exception) {
+                message.value = "AI 返回的作品设定格式无效，请重试"
+            } finally {
+                finishGeneration(GenerationTask.PROJECT_PROFILE, request)
             }
         }
     }

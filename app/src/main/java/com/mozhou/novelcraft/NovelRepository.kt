@@ -51,6 +51,7 @@ class NovelRepository(private val database: NovelDatabase) {
 
     suspend fun updateProjectProfile(
         project: NovelProject,
+        title: String,
         genre: String,
         premise: String,
         summary: String,
@@ -60,6 +61,7 @@ class NovelRepository(private val database: NovelDatabase) {
     ) {
         database.projectDao().update(
             project.copy(
+                title = title.trim().ifBlank { project.title },
                 genre = genre.trim().ifBlank { "待分类" },
                 premise = premise.trim(),
                 summary = summary.trim(),
@@ -73,6 +75,7 @@ class NovelRepository(private val database: NovelDatabase) {
 
     suspend fun updateCover(project: NovelProject, coverPath: String) {
         database.projectDao().update(project.copy(coverPath = coverPath, updatedAt = System.currentTimeMillis()))
+        if (project.coverPath.isNotBlank() && project.coverPath != coverPath) File(project.coverPath).delete()
     }
 
     suspend fun deleteProject(project: NovelProject) {

@@ -132,7 +132,29 @@ class OpenAiCompatibleClient {
         request = request,
     )
 
-    suspend fun generateCover(config: ModelConfig, prompt: String, request: GenerationRequest? = null): Result<ByteArray> = withContext(Dispatchers.IO) {
+    suspend fun generateProjectProfile(config: ModelConfig, context: String, request: GenerationRequest? = null): Result<String> = chat(
+        config = config,
+        context = context,
+        temperature = 0.7,
+        systemInstruction = """你是中文网文策划编辑。依据作者给出的书名和已有信息，补全可直接用于创作的作品设定。只输出一个合法 JSON 对象，不要 Markdown 或解释：
+{
+  "genre":"精确题材，最多12字",
+  "premise":"一句话核心设定，最多60字",
+  "summary":"120-180字的网文简介，突出爽点、冲突与悬念",
+  "tags":"3-6个中文标签，用中文逗号分隔",
+  "targetAudience":"目标读者描述，最多30字",
+  "protagonistName":"主角姓名"
+}
+保留并强化作者已给出的信息，不要引用现实在世作者，不要编造具体平台或版权信息。""",
+        request = request,
+    )
+
+    suspend fun generateCover(
+        config: ModelConfig,
+        prompt: String,
+        request: GenerationRequest? = null,
+        size: String = "1024x1536",
+    ): Result<ByteArray> = withContext(Dispatchers.IO) {
         runCatching {
             require(config.imageBaseUrl.startsWith("https://")) { "请先填写封面 AI 的 Base URL" }
             require(config.imageApiKey.isNotBlank()) { "请先填写封面 AI 的 API Key" }
@@ -143,7 +165,7 @@ class OpenAiCompatibleClient {
                 val body = JSONObject().apply {
                     put("model", config.imageModel)
                     put("prompt", prompt)
-                    put("size", "1024x1536")
+                    put("size", size)
                     put("response_format", "b64_json")
                 }.toString()
                 connection.requestMethod = "POST"
@@ -169,6 +191,13 @@ class OpenAiCompatibleClient {
             }
         }
     }
+
+    suspend fun testImage(config: ModelConfig): Result<String> =
+        generateCover(
+            config = config,
+            prompt = "A simple abstract Chinese web novel cover composition, no text, no logo, no watermark.",
+            size = "1024x1024",
+        ).map { "封面 AI 连接成功，图像端点可用" }
 
     private suspend fun chat(
         config: ModelConfig,
