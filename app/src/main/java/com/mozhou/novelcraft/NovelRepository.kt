@@ -10,6 +10,8 @@ class NovelRepository(private val database: NovelDatabase) {
     fun project(projectId: Long): Flow<NovelProject?> = database.projectDao().observe(projectId)
     fun chapters(projectId: Long): Flow<List<Chapter>> = database.chapterDao().observeByProject(projectId)
     fun storyItems(projectId: Long): Flow<List<StoryItem>> = database.storyItemDao().observeByProject(projectId)
+    fun anchors(projectId: Long): Flow<List<StoryAnchor>> = database.storyAnchorDao().observeByProject(projectId)
+    fun edges(projectId: Long): Flow<List<StoryEdge>> = database.storyEdgeDao().observeByProject(projectId)
 
     suspend fun createProject(title: String, genre: String, premise: String): Long {
         val projectId = database.projectDao().insert(
@@ -72,5 +74,43 @@ class NovelRepository(private val database: NovelDatabase) {
 
     suspend fun updateStoryItem(item: StoryItem, kind: String, name: String, detail: String, status: String) {
         database.storyItemDao().update(item.copy(kind = kind, name = name, detail = detail, status = status, updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun addAnchor(
+        projectId: Long,
+        startChapter: Int,
+        endChapter: Int,
+        title: String,
+        coreConflict: String,
+        allowedPlot: String,
+        forbiddenReveals: String,
+        mandatoryTension: String,
+    ) {
+        database.storyAnchorDao().insert(
+            StoryAnchor(
+                projectId = projectId,
+                startChapter = startChapter.coerceAtLeast(1),
+                endChapter = endChapter.coerceAtLeast(startChapter.coerceAtLeast(1)),
+                title = title.trim(),
+                coreConflict = coreConflict.trim(),
+                allowedPlot = allowedPlot.trim(),
+                forbiddenReveals = forbiddenReveals.trim(),
+                mandatoryTension = mandatoryTension.trim(),
+            ),
+        )
+    }
+
+    suspend fun addEdge(projectId: Long, sourceItemId: Long, targetItemId: Long, relation: String, description: String, sinceChapter: Int) {
+        require(sourceItemId != targetItemId) { "关系的两端不能是同一资料卡" }
+        database.storyEdgeDao().insert(
+            StoryEdge(
+                projectId = projectId,
+                sourceItemId = sourceItemId,
+                targetItemId = targetItemId,
+                relation = relation.trim(),
+                description = description.trim(),
+                sinceChapter = sinceChapter.coerceAtLeast(1),
+            ),
+        )
     }
 }

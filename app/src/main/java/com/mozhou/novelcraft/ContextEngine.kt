@@ -3,6 +3,7 @@ package com.mozhou.novelcraft
 data class ContextPacket(
     val relevantItems: List<StoryItem> = emptyList(),
     val relevantChapters: List<Chapter> = emptyList(),
+    val activeAnchor: StoryAnchor? = null,
     val prompt: String = "",
 )
 
@@ -18,6 +19,7 @@ object ContextEngine {
         current: Chapter,
         chapters: List<Chapter>,
         storyItems: List<StoryItem>,
+        anchors: List<StoryAnchor> = emptyList(),
     ): ContextPacket {
         val query = listOf(project.title, project.premise, current.title, current.content.takeLast(1_600)).joinToString("\n")
         val queryTerms = terms(query)
@@ -38,7 +40,8 @@ object ContextEngine {
             .map { it.first }
             .ifEmpty { chapters.filter { it.number < current.number && it.content.isNotBlank() }.takeLast(2) }
 
-        val packet = ContextPacket(relevantItems, retrievedChapters)
+        val anchor = anchors.firstOrNull { current.number in it.startChapter..it.endChapter }
+        val packet = ContextPacket(relevantItems, retrievedChapters, anchor)
         return packet.copy(prompt = buildPrompt(project, current, packet))
     }
 
@@ -47,6 +50,13 @@ object ContextEngine {
         appendLine("题材：${project.genre}")
         if (project.premise.isNotBlank()) appendLine("核心设定：${project.premise}")
         appendLine("当前章节：第${current.number}章 ${current.title}")
+        packet.activeAnchor?.let { anchor ->
+            appendLine("当前大纲锚点：第${anchor.startChapter}-${anchor.endChapter}章 ${anchor.title}")
+            appendLine("本段核心冲突：${anchor.coreConflict}")
+            if (anchor.allowedPlot.isNotBlank()) appendLine("本章允许推进：${anchor.allowedPlot}")
+            if (anchor.forbiddenReveals.isNotBlank()) appendLine("本章严禁揭露：${anchor.forbiddenReveals}")
+            if (anchor.mandatoryTension.isNotBlank()) appendLine("章末必须保留：${anchor.mandatoryTension}")
+        }
         appendLine("当前正文末尾：")
         appendLine(current.content.takeLast(2_200))
         if (packet.relevantItems.isNotEmpty()) {

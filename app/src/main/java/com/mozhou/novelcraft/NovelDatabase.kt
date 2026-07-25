@@ -68,6 +68,49 @@ data class StoryItem(
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
+@Entity(
+    tableName = "story_anchors",
+    foreignKeys = [ForeignKey(
+        entity = NovelProject::class,
+        parentColumns = ["id"],
+        childColumns = ["projectId"],
+        onDelete = ForeignKey.CASCADE,
+    )],
+    indices = [Index("projectId")],
+)
+data class StoryAnchor(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val projectId: Long,
+    val startChapter: Int,
+    val endChapter: Int,
+    val title: String,
+    val coreConflict: String,
+    val allowedPlot: String = "",
+    val forbiddenReveals: String = "",
+    val mandatoryTension: String = "",
+)
+
+@Entity(
+    tableName = "story_edges",
+    foreignKeys = [ForeignKey(
+        entity = NovelProject::class,
+        parentColumns = ["id"],
+        childColumns = ["projectId"],
+        onDelete = ForeignKey.CASCADE,
+    )],
+    indices = [Index("projectId"), Index("sourceItemId"), Index("targetItemId")],
+)
+data class StoryEdge(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val projectId: Long,
+    val sourceItemId: Long,
+    val targetItemId: Long,
+    val relation: String,
+    val strength: Float = 0.5f,
+    val description: String = "",
+    val sinceChapter: Int = 1,
+)
+
 object StoryItemStatus {
     const val ACTIVE = "活跃"
     const val RESOLVED = "已回收"
@@ -122,15 +165,35 @@ interface StoryItemDao {
     suspend fun update(item: StoryItem)
 }
 
+@Dao
+interface StoryAnchorDao {
+    @Query("SELECT * FROM story_anchors WHERE projectId = :projectId ORDER BY startChapter ASC, endChapter ASC")
+    fun observeByProject(projectId: Long): Flow<List<StoryAnchor>>
+
+    @Insert
+    suspend fun insert(anchor: StoryAnchor): Long
+}
+
+@Dao
+interface StoryEdgeDao {
+    @Query("SELECT * FROM story_edges WHERE projectId = :projectId ORDER BY sinceChapter ASC, id ASC")
+    fun observeByProject(projectId: Long): Flow<List<StoryEdge>>
+
+    @Insert
+    suspend fun insert(edge: StoryEdge): Long
+}
+
 @Database(
-    entities = [NovelProject::class, Chapter::class, StoryItem::class],
-    version = 2,
+    entities = [NovelProject::class, Chapter::class, StoryItem::class, StoryAnchor::class, StoryEdge::class],
+    version = 3,
     exportSchema = false,
 )
 abstract class NovelDatabase : RoomDatabase() {
     abstract fun projectDao(): ProjectDao
     abstract fun chapterDao(): ChapterDao
     abstract fun storyItemDao(): StoryItemDao
+    abstract fun storyAnchorDao(): StoryAnchorDao
+    abstract fun storyEdgeDao(): StoryEdgeDao
 
     companion object {
         private val MIGRATION_1_2 = object : Migration(1, 2) {
@@ -140,11 +203,46 @@ abstract class NovelDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE story_items ADD COLUMN status TEXT NOT NULL DEFAULT '活跃'")
             }
         }
+        private val MIGRATION_2_3 = object : Migration(2, 3) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS story_anchors (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        projectId INTEGER NOT NULL,
+                        startChapter INTEGER NOT NULL,
+                        endChapter INTEGER NOT NULL,
+                        title TEXT NOT NULL,
+                        coreConflict TEXT NOT NULL,
+                        allowedPlot TEXT NOT NULL,
+                        forbiddenReveals TEXT NOT NULL,
+                        mandatoryTension TEXT NOT NULL,
+                        FOREIGN KEY(projectId) REFERENCES projects(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_story_anchors_projectId ON story_anchors(projectId)")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS story_edges (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        projectId INTEGER NOT NULL,
+                        sourceItemId INTEGER NOT NULL,
+                        targetItemId INTEGER NOT NULL,
+                        relation TEXT NOT NULL,
+                        strength REAL NOT NULL,
+                        description TEXT NOT NULL,
+                        sinceChapter INTEGER NOT NULL,
+                        FOREIGN KEY(projectId) REFERENCES projects(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_story_edges_projectId ON story_edges(projectId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_story_edges_sourceItemId ON story_edges(sourceItemId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_story_edges_targetItemId ON story_edges(targetItemId)")
+            }
+        }
 
         fun create(context: Context): NovelDatabase = Room.databaseBuilder(
             context.applicationContext,
             NovelDatabase::class.java,
             "novelcraft.db",
-        ).addMigrations(MIGRATION_1_2).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3).build()
     }
 }

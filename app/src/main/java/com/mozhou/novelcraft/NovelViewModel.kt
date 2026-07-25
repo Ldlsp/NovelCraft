@@ -43,16 +43,24 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         if (id == null) flowOf(emptyList()) else repository.storyItems(id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val anchors = selectedProjectId.flatMapLatest { id ->
+        if (id == null) flowOf(emptyList()) else repository.anchors(id)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val edges = selectedProjectId.flatMapLatest { id ->
+        if (id == null) flowOf(emptyList()) else repository.edges(id)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val selectedChapter = combine(chapters, selectedChapterId) { all, id ->
         all.firstOrNull { it.id == id } ?: all.firstOrNull()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
-    val contextPacket = combine(selectedProject, selectedChapter, chapters, storyItems) { project, chapter, allChapters, items ->
-        if (project == null || chapter == null) ContextPacket() else ContextEngine.build(project, chapter, allChapters, items)
+    val contextPacket = combine(selectedProject, selectedChapter, chapters, storyItems, anchors) { project, chapter, allChapters, items, projectAnchors ->
+        if (project == null || chapter == null) ContextPacket() else ContextEngine.build(project, chapter, allChapters, items, projectAnchors)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextPacket())
 
-    val qualityIssues = combine(selectedChapter, storyItems) { chapter, items ->
-        QualityGate.inspect(chapter, items)
+    val qualityIssues = combine(selectedChapter, storyItems, anchors) { chapter, items, projectAnchors ->
+        QualityGate.inspect(chapter, items, projectAnchors)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val modelConfig = MutableStateFlow(modelPreferences.load())
@@ -189,13 +197,46 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun addAnchor(
+        startChapter: Int,
+        endChapter: Int,
+        title: String,
+        coreConflict: String,
+        allowedPlot: String,
+        forbiddenReveals: String,
+        mandatoryTension: String,
+    ) {
+        val projectId = selectedProjectId.value ?: return
+        if (title.isBlank() || coreConflict.isBlank()) {
+            message.value = "请填写锚点标题与核心冲突"
+            return
+        }
+        viewModelScope.launch {
+            repository.addAnchor(projectId, startChapter, endChapter, title, coreConflict, allowedPlot, forbiddenReveals, mandatoryTension)
+            message.value = "大纲锚点已保存"
+        }
+    }
+
+    fun addEdge(sourceItemId: Long, targetItemId: Long, relation: String, description: String, sinceChapter: Int) {
+        val projectId = selectedProjectId.value ?: return
+        if (relation.isBlank()) {
+            message.value = "请填写关系类型"
+            return
+        }
+        viewModelScope.launch {
+            runCatching { repository.addEdge(projectId, sourceItemId, targetItemId, relation, description, sinceChapter) }
+                .onSuccess { message.value = "关系已加入知识图谱" }
+                .onFailure { message.value = it.message ?: "关系保存失败" }
+        }
+    }
+
     fun generateChapterPlan() {
         val project = selectedProject.value ?: return
         val chapter = selectedChapter.value ?: return
         if (isGenerating.value) return
         isGenerating.value = true
         message.value = "正在根据本地记忆生成本章计划..."
-        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value).prompt +
+        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value).prompt +
             "\n请为当前章节生成大纲，覆盖冲突、转折和结尾钩子。"
         generationJob = viewModelScope.launch {
             try {
@@ -238,7 +279,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val sourceChapter = chapter.copy(content = sourceContent)
         isGenerating.value = true
         message.value = "正在直接请求你的模型..."
-        val writingContext = ContextEngine.build(project, sourceChapter, chapters.value, storyItems.value).prompt
+        val writingContext = ContextEngine.build(project, sourceChapter, chapters.value, storyItems.value, anchors.value).prompt
         generationJob = viewModelScope.launch {
             try {
                 val result = modelClient.continueWriting(modelConfig.value, writingContext)

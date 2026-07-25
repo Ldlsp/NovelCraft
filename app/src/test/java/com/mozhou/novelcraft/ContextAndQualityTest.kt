@@ -13,13 +13,16 @@ class ContextAndQualityTest {
         val current = Chapter(id = 3, projectId = 1, number = 2, title = "雨夜", content = "沈舟握紧月契，朝仓库的灯光走去。")
         val memory = StoryItem(id = 4, projectId = 1, kind = "人物", name = "沈舟", detail = "姐姐失踪后独自追查。")
         val resolved = StoryItem(id = 5, projectId = 1, kind = "伏笔", name = "月契", detail = "已经在上一章回收。", status = StoryItemStatus.RESOLVED)
+        val anchor = StoryAnchor(projectId = 1, startChapter = 2, endChapter = 8, title = "港口迷局", coreConflict = "沈舟必须找到失踪姐姐的线索", forbiddenReveals = "姐姐的真实下落")
 
-        val packet = ContextEngine.build(project, current, listOf(previous, current), listOf(memory, resolved))
+        val packet = ContextEngine.build(project, current, listOf(previous, current), listOf(memory, resolved), listOf(anchor))
 
         assertEquals(memory, packet.relevantItems.single())
         assertEquals(previous, packet.relevantChapters.single())
         assertTrue(packet.prompt.contains("必须优先遵守的本地设定"))
         assertTrue(packet.prompt.contains("旧码头"))
+        assertEquals(anchor, packet.activeAnchor)
+        assertTrue(packet.prompt.contains("本章严禁揭露"))
     }
 
     @Test
@@ -51,5 +54,15 @@ class ContextAndQualityTest {
         val text = DocumentTextExtractor.extractDocumentXml(xml)
 
         assertEquals("第1章 雨夜\n灯火映在水面。", text)
+    }
+
+    @Test
+    fun flagsAnchorForbiddenReveal() {
+        val chapter = Chapter(projectId = 1, number = 3, title = "揭露", content = "姐姐的真实下落就在港口的灯塔里。")
+        val anchor = StoryAnchor(projectId = 1, startChapter = 1, endChapter = 10, title = "前卷", coreConflict = "寻找线索", forbiddenReveals = "姐姐的真实下落")
+
+        val issues = QualityGate.inspect(chapter, emptyList(), listOf(anchor))
+
+        assertTrue(issues.any { it.title == "可能提前揭露大纲禁区" })
     }
 }
