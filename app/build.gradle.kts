@@ -12,8 +12,8 @@ android {
         applicationId = "com.mozhou.novelcraft"
         minSdk = 26
         targetSdk = 34
-        versionCode = 18
-        versionName = "0.9.0"
+        versionCode = 19
+        versionName = "0.9.1"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

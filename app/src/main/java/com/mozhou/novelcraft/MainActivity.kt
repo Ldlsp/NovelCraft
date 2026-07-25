@@ -215,6 +215,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onGenerateRepairPlan = viewModel::generateRepairPlan,
                                 onMarkQualityRepaired = viewModel::markCurrentChapterQualityRepaired,
                                 onReviseOutline = viewModel::reviseOutline,
+                                onResolveOutlineCascade = viewModel::resolveOutlineCascade,
                             )
                         }
                     }
@@ -406,6 +407,7 @@ private fun WorkspaceScreen(
     onGenerateRepairPlan: () -> Unit,
     onMarkQualityRepaired: () -> Unit,
     onReviseOutline: (Int, String) -> Unit,
+    onResolveOutlineCascade: () -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
@@ -419,7 +421,7 @@ private fun WorkspaceScreen(
                 chapters, selectedChapter, contextPacket, config, isGenerating,
                 onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate, onAutoWrite, onCancelGeneration,
             )
-            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor, onReviseOutline)
+            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor, onReviseOutline, onResolveOutlineCascade)
             WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, isGenerating, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory)
             WorkspaceTab.REVIEW -> ReviewTab(selectedChapter, qualityIssues, repairPlan, config, isGenerating, onGenerateRepairPlan, onMarkQualityRepaired, onCancelGeneration)
         }
@@ -611,6 +613,7 @@ private fun OutlineTab(
     onCancel: () -> Unit,
     onAddAnchor: (Int, Int, String, String, String, String, String) -> Unit,
     onReviseOutline: (Int, String) -> Unit,
+    onResolveOutlineCascade: () -> Unit,
 ) {
     var anchorDialogVisible by rememberSaveable { mutableStateOf(false) }
     var reviseDialogVisible by rememberSaveable { mutableStateOf(false) }
@@ -620,7 +623,10 @@ private fun OutlineTab(
             Text("章节大纲", style = MaterialTheme.typography.headlineSmall)
             if (project.premise.isNotBlank()) Text(project.premise, color = Color.Gray)
             OutlinedButton(onClick = { reviseDialogVisible = true }, modifier = Modifier.padding(top = 8.dp)) { Text("改纲级联") }
-            if (project.outlineRevisionReport.isNotBlank()) Text(project.outlineRevisionReport, color = Gold, style = MaterialTheme.typography.labelSmall)
+            if (project.outlineRevisionReport.isNotBlank()) {
+                Text(project.outlineRevisionReport, color = Gold, style = MaterialTheme.typography.labelSmall)
+                Button(onClick = onResolveOutlineCascade) { Text("确认已复核全部待审项") }
+            }
         }
         item { StyleGuideEditor(project.styleGuide, config, isGenerating, onSaveStyleGuide, onExtractStyleGuide, onCancel) }
         item {
@@ -698,6 +704,7 @@ private fun AnchorCard(anchor: StoryAnchor, currentChapter: Int?) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(3.dp)) {
             Text("第${anchor.startChapter}-${anchor.endChapter}章 · ${anchor.title}", style = MaterialTheme.typography.titleSmall, color = if (isCurrent) Teal else Ink)
             Text(anchor.coreConflict, style = MaterialTheme.typography.bodySmall)
+            if (anchor.cascadePending) Text("改纲待审", color = Gold, style = MaterialTheme.typography.labelSmall)
             if (anchor.allowedPlot.isNotBlank()) Text("推进：${anchor.allowedPlot}", color = Color.Gray, style = MaterialTheme.typography.labelSmall)
             if (anchor.forbiddenReveals.isNotBlank()) Text("禁区：${anchor.forbiddenReveals}", color = Red, style = MaterialTheme.typography.labelSmall)
             if (anchor.mandatoryTension.isNotBlank()) Text("张力：${anchor.mandatoryTension}", color = Gold, style = MaterialTheme.typography.labelSmall)
@@ -873,6 +880,7 @@ private fun ResourcesTab(
                         Spacer(Modifier.width(12.dp))
                         Column {
                             Text(item.kind + " · " + item.name + " · " + item.status, style = MaterialTheme.typography.titleSmall)
+                            if (item.cascadePending) Text("改纲待审", color = Gold, style = MaterialTheme.typography.labelSmall)
                             Text(item.detail, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -888,6 +896,7 @@ private fun ResourcesTab(
                     Column(Modifier.padding(14.dp)) {
                         Text("$source  - ${edge.relation} -  $target", style = MaterialTheme.typography.titleSmall)
                         if (edge.description.isNotBlank()) Text(edge.description, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
+                        if (edge.cascadePending) Text("改纲待审", color = Gold, style = MaterialTheme.typography.labelSmall)
                         Text("自第${edge.sinceChapter}章起", color = Teal, style = MaterialTheme.typography.labelSmall)
                     }
                 }

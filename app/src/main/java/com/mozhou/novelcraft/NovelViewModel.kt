@@ -457,6 +457,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val project = selectedProject.value ?: return
         val chapter = selectedChapter.value ?: return
         if (isGenerating.value) return
+        if (hasPendingCascade()) { message.value = "改纲待审项尚未复核，暂不能继续写作"; return }
         val sourceContent = pendingChapterContent[chapter.id] ?: chapter.content
         val sourceChapter = chapter.copy(content = sourceContent)
         isGenerating.value = true
@@ -486,6 +487,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     fun autoWriteChapters(count: Int) {
         val project = selectedProject.value ?: return
         if (isGenerating.value) return
+        if (hasPendingCascade()) { message.value = "改纲待审项尚未复核，暂不能批量写作"; return }
         val total = count.coerceIn(1, 5)
         isGenerating.value = true
         message.value = "自动写作已启动：准备生成 $total 章"
@@ -536,6 +538,16 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
             message.value = report.summary + " 已标记为待审，请在资料和大纲页逐项确认。"
         }
     }
+
+    fun resolveOutlineCascade() {
+        val project = selectedProject.value ?: return
+        viewModelScope.launch {
+            repository.resolveOutlineCascade(project, storyItems.value, anchors.value, edges.value)
+            message.value = "已确认全部改纲待审项，可恢复 AI 写作"
+        }
+    }
+
+    private fun hasPendingCascade(): Boolean = storyItems.value.any { it.cascadePending } || anchors.value.any { it.cascadePending } || edges.value.any { it.cascadePending }
 
     fun markCurrentChapterQualityRepaired() {
         val chapter = selectedChapter.value ?: return

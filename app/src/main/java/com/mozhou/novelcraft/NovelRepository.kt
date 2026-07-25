@@ -55,6 +55,13 @@ class NovelRepository(private val database: NovelDatabase) {
         database.projectDao().update(project.copy(outlineRevisionReport = report.summary, updatedAt = System.currentTimeMillis()))
     }
 
+    suspend fun resolveOutlineCascade(project: NovelProject, items: List<StoryItem>, anchors: List<StoryAnchor>, edges: List<StoryEdge>) = database.withTransaction {
+        database.storyItemDao().updateAll(items.filter { it.cascadePending }.map { it.copy(cascadePending = false) })
+        database.storyAnchorDao().updateAll(anchors.filter { it.cascadePending }.map { it.copy(cascadePending = false) })
+        database.storyEdgeDao().updateAll(edges.filter { it.cascadePending }.map { it.copy(cascadePending = false) })
+        database.projectDao().update(project.copy(outlineRevisionReport = "", updatedAt = System.currentTimeMillis()))
+    }
+
     suspend fun renameChapter(chapter: Chapter, title: String) {
         val timestamp = System.currentTimeMillis()
         database.chapterDao().update(chapter.copy(title = title.trim().ifBlank { "第${chapter.number}章" }, updatedAt = timestamp))

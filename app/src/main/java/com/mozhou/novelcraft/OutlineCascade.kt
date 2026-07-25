@@ -18,7 +18,7 @@ object OutlineCascadeAnalyzer {
         description: String,
     ): OutlineCascadeReport {
         val start = fromChapter.coerceAtLeast(1)
-        val futureText = chapters.filter { it.number >= start }
+        val futureText = description + "\n" + chapters.filter { it.number >= start }
             .joinToString("\n") { "${it.title}\n${it.outline}\n${it.beatSheet}\n${it.content}" }
         val seedItems = items.filter { it.name.isNotBlank() && futureText.contains(it.name) }.map { it.id }.toMutableSet()
         edges.filter { it.sinceChapter >= start }.forEach { seedItems += it.sourceItemId; seedItems += it.targetItemId }
