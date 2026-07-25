@@ -21,10 +21,11 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = NovelRepository(NovelDatabase.create(application))
     private val modelPreferences = ModelPreferences(application)
     private val modelClient = OpenAiCompatibleClient()
-    private var saveChapterJob: Job? = null
+    private val saveChapterJobs = mutableMapOf<Long, Job>()
     private var renameChapterJob: Job? = null
     private var savePlanJob: Job? = null
     private var generationJob: Job? = null
+    private val pendingChapterContent = mutableMapOf<Long, String>()
 
     val projects = repository.projects().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val selectedProjectId = MutableStateFlow<Long?>(null)
@@ -128,10 +129,14 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
 
     fun saveChapter(content: String) {
         val chapter = selectedChapter.value ?: return
-        saveChapterJob?.cancel()
-        saveChapterJob = viewModelScope.launch {
+        pendingChapterContent[chapter.id] = content
+        saveChapterJobs.remove(chapter.id)?.cancel()
+        saveChapterJobs[chapter.id] = viewModelScope.launch {
             delay(500)
-            repository.updateChapter(chapter, content)
+            val pending = pendingChapterContent[chapter.id] ?: return@launch
+            repository.updateChapter(chapter, pending)
+            if (pendingChapterContent[chapter.id] == pending) pendingChapterContent.remove(chapter.id)
+            saveChapterJobs.remove(chapter.id)
         }
     }
 
@@ -229,16 +234,22 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val project = selectedProject.value ?: return
         val chapter = selectedChapter.value ?: return
         if (isGenerating.value) return
+        val sourceContent = pendingChapterContent[chapter.id] ?: chapter.content
+        val sourceChapter = chapter.copy(content = sourceContent)
         isGenerating.value = true
         message.value = "正在直接请求你的模型..."
-        val writingContext = ContextEngine.build(project, chapter, chapters.value, storyItems.value).prompt
+        val writingContext = ContextEngine.build(project, sourceChapter, chapters.value, storyItems.value).prompt
         generationJob = viewModelScope.launch {
             try {
                 val result = modelClient.continueWriting(modelConfig.value, writingContext)
                 if (!isActive) return@launch
                 result.fold(
                     onSuccess = { generated ->
-                        repository.updateChapter(chapter, chapter.content.trimEnd() + "\n\n" + generated)
+                        // Preserve text typed while the model was generating; AI output only appends.
+                        saveChapterJobs.remove(chapter.id)?.cancel()
+                        val currentChapter = chapters.value.firstOrNull { it.id == chapter.id } ?: chapter
+                        val currentContent = pendingChapterContent.remove(chapter.id) ?: currentChapter.content
+                        repository.updateChapter(currentChapter, currentContent.trimEnd() + "\n\n" + generated)
                         message.value = "已续写并保存到本机"
                     },
                     onFailure = { message.value = it.message ?: "续写失败" },
