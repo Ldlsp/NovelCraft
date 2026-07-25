@@ -230,6 +230,73 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun extractMemoryFromCurrentChapter() {
+        val chapter = selectedChapter.value ?: return
+        if (isGenerating.value) return
+        val content = pendingChapterContent[chapter.id] ?: chapter.content
+        if (content.isBlank()) {
+            message.value = "本章还没有正文，无法提取记忆"
+            return
+        }
+        isGenerating.value = true
+        message.value = "正在从本章提取知识图谱..."
+        val extractionInput = "第${chapter.number}章 ${chapter.title}\n$content"
+        generationJob = viewModelScope.launch {
+            try {
+                val result = modelClient.extractStoryMemory(modelConfig.value, extractionInput)
+                if (!isActive) return@launch
+                result.fold(
+                    onSuccess = { raw ->
+                        runCatching { MemoryExtractionParser.parse(raw) }.onSuccess { extraction ->
+                            val knownByName = storyItems.value.associateBy { it.name }.toMutableMap()
+                            var addedItems = 0
+                            extraction.items.distinctBy { it.name }.forEach { candidate ->
+                                val existing = knownByName[candidate.name]
+                                if (existing == null) {
+                                    val id = repository.addStoryItem(
+                                        chapter.projectId,
+                                        candidate.kind,
+                                        candidate.name,
+                                        candidate.detail,
+                                        candidate.status,
+                                    )
+                                    knownByName[candidate.name] = StoryItem(
+                                        id = id,
+                                        projectId = chapter.projectId,
+                                        kind = candidate.kind,
+                                        name = candidate.name,
+                                        detail = candidate.detail,
+                                        status = candidate.status,
+                                    )
+                                    addedItems += 1
+                                } else if (candidate.detail.isNotBlank() && (existing.detail != candidate.detail || existing.status != candidate.status)) {
+                                    repository.updateStoryItem(existing, candidate.kind, candidate.name, candidate.detail, candidate.status)
+                                }
+                            }
+                            val existingEdges = edges.value.map { Triple(it.sourceItemId, it.targetItemId, it.relation) }.toMutableSet()
+                            var addedEdges = 0
+                            extraction.edges.forEach { candidate ->
+                                val source = knownByName[candidate.sourceName] ?: return@forEach
+                                val target = knownByName[candidate.targetName] ?: return@forEach
+                                val key = Triple(source.id, target.id, candidate.relation)
+                                if (source.id != target.id && existingEdges.add(key)) {
+                                    repository.addEdge(chapter.projectId, source.id, target.id, candidate.relation, candidate.description, chapter.number)
+                                    addedEdges += 1
+                                }
+                            }
+                            message.value = "记忆已更新：新增 $addedItems 条资料、$addedEdges 条关系"
+                        }.onFailure {
+                            message.value = "模型返回的图谱格式无效，请重试"
+                        }
+                    },
+                    onFailure = { message.value = it.message ?: "提取记忆失败" },
+                )
+            } finally {
+                isGenerating.value = false
+            }
+        }
+    }
+
     fun generateChapterPlan() {
         val project = selectedProject.value ?: return
         val chapter = selectedChapter.value ?: return

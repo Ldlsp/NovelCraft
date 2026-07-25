@@ -66,8 +66,8 @@ class NovelRepository(private val database: NovelDatabase) {
         return id
     }
 
-    suspend fun addStoryItem(projectId: Long, kind: String, name: String, detail: String, status: String) {
-        database.storyItemDao().insert(
+    suspend fun addStoryItem(projectId: Long, kind: String, name: String, detail: String, status: String): Long {
+        return database.storyItemDao().insert(
             StoryItem(projectId = projectId, kind = kind, name = name, detail = detail, status = status),
         )
     }
@@ -100,9 +100,9 @@ class NovelRepository(private val database: NovelDatabase) {
         )
     }
 
-    suspend fun addEdge(projectId: Long, sourceItemId: Long, targetItemId: Long, relation: String, description: String, sinceChapter: Int) {
+    suspend fun addEdge(projectId: Long, sourceItemId: Long, targetItemId: Long, relation: String, description: String, sinceChapter: Int): Long {
         require(sourceItemId != targetItemId) { "关系的两端不能是同一资料卡" }
-        database.storyEdgeDao().insert(
+        return database.storyEdgeDao().insert(
             StoryEdge(
                 projectId = projectId,
                 sourceItemId = sourceItemId,

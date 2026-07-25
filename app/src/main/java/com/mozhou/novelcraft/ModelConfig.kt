@@ -82,6 +82,18 @@ class OpenAiCompatibleClient {
         systemInstruction = "你是中文网文策划编辑。根据作者提供的已写内容和本地设定，只输出本章可执行大纲：目标、冲突升级、关键转折、结尾钩子。使用简短中文分点，不要写正文，不要暴露保密设定。",
     )
 
+    suspend fun extractStoryMemory(config: ModelConfig, chapterText: String): Result<String> = chat(
+        config = config,
+        context = chapterText,
+        temperature = 0.1,
+        systemInstruction = """你是小说知识图谱抽取器。仅根据给出的章节文本提取明确出现或明确变化的信息，不得猜测、补全或写小说正文。只输出一个合法 JSON 对象，不要 Markdown：
+{
+  "items":[{"kind":"人物|地点|势力|物品|事件|伏笔|世界规则","name":"名称","detail":"本章可验证的状态或事实","status":"活跃|已回收|保密"}],
+  "edges":[{"source":"已在items中出现的名称","target":"已在items中出现的名称","relation":"同盟|敌对|位于|持有|隶属|触发|铺垫|师徒|情感","description":"本章证据"}]
+}
+没有可靠信息时返回空数组。每类最多15条，不要把普通路人、泛称或推测当实体。""",
+    )
+
     private suspend fun chat(
         config: ModelConfig,
         context: String,

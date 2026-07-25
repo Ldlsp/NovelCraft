@@ -201,6 +201,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onUpdateStoryItem = viewModel::updateStoryItem,
                                 onAddAnchor = viewModel::addAnchor,
                                 onAddEdge = viewModel::addEdge,
+                                onExtractMemory = viewModel::extractMemoryFromCurrentChapter,
                                 onGenerate = viewModel::generateContinuation,
                                 onGeneratePlan = viewModel::generateChapterPlan,
                                 onCancelGeneration = viewModel::cancelGeneration,
@@ -382,6 +383,7 @@ private fun WorkspaceScreen(
     onUpdateStoryItem: (StoryItem, String, String, String, String) -> Unit,
     onAddAnchor: (Int, Int, String, String, String, String, String) -> Unit,
     onAddEdge: (Long, Long, String, String, Int) -> Unit,
+    onExtractMemory: () -> Unit,
     onGenerate: () -> Unit,
     onGeneratePlan: () -> Unit,
     onCancelGeneration: () -> Unit,
@@ -399,7 +401,7 @@ private fun WorkspaceScreen(
                 onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate, onCancelGeneration,
             )
             WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onGeneratePlan, onCancelGeneration, onAddAnchor)
-            WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, onAddStoryItem, onUpdateStoryItem, onAddEdge)
+            WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, isGenerating, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory)
             WorkspaceTab.REVIEW -> ReviewTab(qualityIssues)
         }
     }
@@ -672,9 +674,11 @@ private fun ChapterPlanEditor(
 private fun ResourcesTab(
     items: List<StoryItem>,
     edges: List<StoryEdge>,
+    isGenerating: Boolean,
     onAdd: (String, String, String, String) -> Unit,
     onUpdate: (StoryItem, String, String, String, String) -> Unit,
     onAddEdge: (Long, Long, String, String, Int) -> Unit,
+    onExtractMemory: () -> Unit,
 ) {
     var dialogVisible by rememberSaveable { mutableStateOf(false) }
     var editItem by remember { mutableStateOf<StoryItem?>(null) }
@@ -687,6 +691,7 @@ private fun ResourcesTab(
                     Text("所有资料都会写入本机 SQLite。", color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                 }
                 Row {
+                    IconButton(onClick = onExtractMemory, enabled = !isGenerating) { Icon(Icons.Outlined.AutoStories, "从当前章节提取记忆") }
                     IconButton(onClick = { edgeDialogVisible = true }, enabled = items.size >= 2) { Icon(Icons.Outlined.People, "添加关系") }
                     IconButton(onClick = { dialogVisible = true }) { Icon(Icons.Outlined.Add, "添加资料") }
                 }
