@@ -207,6 +207,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onAddEdge = viewModel::addEdge,
                                 onExtractMemory = viewModel::extractMemoryFromCurrentChapter,
                                 onGenerate = viewModel::generateContinuation,
+                                onAutoWrite = viewModel::autoWriteChapters,
                                 onGeneratePlan = viewModel::generateChapterPlan,
                                 onGenerateBeatSheet = viewModel::generateBeatSheet,
                                 onExtractStyleGuide = viewModel::extractStyleGuideFromCurrentChapter,
@@ -331,12 +332,12 @@ private fun ShelfScreen(
 
 @Composable
 private fun ActionCard(title: String, detail: String, icon: androidx.compose.ui.graphics.vector.ImageVector, modifier: Modifier, onClick: () -> Unit) {
-    OutlinedButton(onClick = onClick, modifier = modifier.height(90.dp)) {
+    OutlinedButton(onClick = onClick, modifier = modifier.height(124.dp)) {
         Column(horizontalAlignment = Alignment.Start, modifier = Modifier.fillMaxWidth()) {
             Icon(icon, null, tint = Red)
             Spacer(Modifier.height(6.dp))
             Text(title)
-            Text(detail, style = MaterialTheme.typography.labelSmall, color = Color.Gray)
+            Text(detail, style = MaterialTheme.typography.labelSmall, color = Color.Gray, maxLines = 2)
         }
     }
 }
@@ -395,6 +396,7 @@ private fun WorkspaceScreen(
     onAddEdge: (Long, Long, String, String, Int) -> Unit,
     onExtractMemory: () -> Unit,
     onGenerate: () -> Unit,
+    onAutoWrite: (Int) -> Unit,
     onGeneratePlan: () -> Unit,
     onGenerateBeatSheet: () -> Unit,
     onExtractStyleGuide: () -> Unit,
@@ -411,7 +413,7 @@ private fun WorkspaceScreen(
         when (WorkspaceTab.entries[selectedTab]) {
             WorkspaceTab.WRITE -> WriteTab(
                 chapters, selectedChapter, contextPacket, config, isGenerating,
-                onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate, onCancelGeneration,
+                onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate, onAutoWrite, onCancelGeneration,
             )
             WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor)
             WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, isGenerating, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory)
@@ -433,6 +435,7 @@ private fun WriteTab(
     onRename: (String) -> Unit,
     onAddChapter: () -> Unit,
     onGenerate: () -> Unit,
+    onAutoWrite: (Int) -> Unit,
     onCancel: () -> Unit,
 ) {
     if (chapter == null) {
@@ -441,6 +444,7 @@ private fun WriteTab(
     }
     var draft by remember(chapter.id, chapter.content) { mutableStateOf(chapter.content) }
     var title by remember(chapter.id, chapter.title) { mutableStateOf(chapter.title) }
+    var autoWriteDialogVisible by rememberSaveable { mutableStateOf(false) }
     Column(Modifier.fillMaxSize().padding(16.dp)) {
         ChapterRail(chapters, chapter.id, onSelectChapter, onAddChapter)
         OutlinedTextField(
@@ -450,19 +454,20 @@ private fun WriteTab(
             modifier = Modifier.fillMaxWidth(),
             singleLine = true,
         )
-        Text(draft.count { !it.isWhitespace() }.toString() + " 字 · 自动保存到 SQLite", color = Color.Gray, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(vertical = 8.dp))
+        Text(draft.count { !it.isWhitespace() }.toString() + " 字 · 自动保存到 SQLite", color = Color.Gray, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 6.dp, bottom = 4.dp))
+        ContextSummary(contextPacket)
+        Spacer(Modifier.height(6.dp))
         OutlinedTextField(
             value = draft,
             onValueChange = { draft = it; onSave(it) },
             modifier = Modifier.weight(1f).fillMaxWidth(),
             label = { Text("小说正文") },
-            minLines = 12,
+            minLines = 1,
         )
-        ContextSummary(contextPacket)
-        Spacer(Modifier.height(10.dp))
+        Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
             if (isGenerating) {
-                Button(onClick = onCancel) {
+                Button(onClick = onCancel, modifier = Modifier.weight(1f)) {
                     Icon(Icons.Outlined.Close, null)
                     Spacer(Modifier.width(6.dp))
                     Text("取消")
@@ -470,6 +475,7 @@ private fun WriteTab(
             } else {
                 Button(
                     onClick = onGenerate,
+                    modifier = Modifier.weight(1f),
                     enabled = config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
                 ) {
                     Icon(Icons.Outlined.Lightbulb, null)
@@ -477,16 +483,42 @@ private fun WriteTab(
                     Text("AI 续写")
                 }
             }
-            OutlinedButton(onClick = { onSave(draft) }) {
-                Icon(Icons.Outlined.Save, null)
-                Spacer(Modifier.width(6.dp))
-                Text("保存")
+            IconButton(onClick = { onSave(draft) }, modifier = Modifier.width(56.dp).height(48.dp)) {
+                Icon(Icons.Outlined.Save, "保存", tint = Red)
             }
+            OutlinedButton(
+                onClick = { autoWriteDialogVisible = true },
+                modifier = Modifier.width(86.dp),
+                enabled = !isGenerating && config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
+            ) { Text("批量") }
         }
         if (config.baseUrl.isBlank() || config.apiKey.isBlank() || config.model.isBlank()) {
             Text("请先在“我的”填写 Base URL、API Key 与模型名称。", color = Gold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
         }
     }
+    if (autoWriteDialogVisible) {
+        AutoWriteDialog(
+            onDismiss = { autoWriteDialogVisible = false },
+            onStart = { count -> onAutoWrite(count); autoWriteDialogVisible = false },
+        )
+    }
+}
+
+@Composable
+private fun AutoWriteDialog(onDismiss: () -> Unit, onStart: (Int) -> Unit) {
+    var count by remember { mutableStateOf("1") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("批量写作") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text("将依次生成新章节；每章出现本地门禁警告会立即停止。")
+                OutlinedTextField(value = count, onValueChange = { count = it.filter(Char::isDigit) }, label = { Text("章节数，1-5") }, singleLine = true)
+            }
+        },
+        confirmButton = { Button(onClick = { onStart((count.toIntOrNull() ?: 1).coerceIn(1, 5)) }) { Text("开始") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable
@@ -512,23 +544,21 @@ private fun ChapterRail(chapters: List<Chapter>, selectedId: Long, onSelect: (Lo
 @Composable
 private fun ContextSummary(packet: ContextPacket) {
     Card(
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
+        modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = Color(0xFFE5F0ED)),
     ) {
-        Row(Modifier.fillMaxWidth().padding(10.dp), verticalAlignment = Alignment.CenterVertically) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 10.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
             Icon(Icons.Outlined.Lightbulb, null, tint = Teal)
             Spacer(Modifier.width(8.dp))
-            Column(Modifier.weight(1f)) {
-                Text("本次续写上下文", style = MaterialTheme.typography.labelLarge)
-                val names = packet.relevantItems.take(3).joinToString("、") { it.name }
-                Text(
-                    "${packet.relevantItems.size} 条设定 · ${packet.relevantChapters.size} 段章节摘录" + if (names.isBlank()) "" else "：$names",
-                    color = Color.Gray,
-                    style = MaterialTheme.typography.labelSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            val names = packet.relevantItems.take(2).joinToString("、") { it.name }
+            Text(
+                "上下文：${packet.relevantItems.size} 条设定 · ${packet.relevantChapters.size} 段摘录" + if (names.isBlank()) "" else " · $names",
+                color = Color.Gray,
+                style = MaterialTheme.typography.labelSmall,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.weight(1f),
+            )
         }
     }
 }

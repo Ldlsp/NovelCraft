@@ -89,6 +89,13 @@ class OpenAiCompatibleClient {
         systemInstruction = "你是中文网文分镜策划。基于本章计划、锚点和历史信息，只输出 4-7 条按顺序执行的 Beat Sheet。每条必须写明场景/人物动作/信息变化或冲突升级；最后一条必须是具体钩子。不要写正文、分析或 Markdown 标题；不得提前揭露禁区。",
     )
 
+    suspend fun writeFullChapter(config: ModelConfig, context: String): Result<String> = chat(
+        config = config,
+        context = context,
+        temperature = 0.8,
+        systemInstruction = "你是中文网文作者。根据上下文、文风、锚点和分镜，输出一章完整纯小说正文（建议不少于 800 字）。只输出正文，不输出标题、说明、Markdown、分析或元信息。不得提前揭露禁区，结尾必须留下具体可继续写的钩子。",
+    )
+
     suspend fun extractStoryMemory(config: ModelConfig, chapterText: String): Result<String> = chat(
         config = config,
         context = chapterText,

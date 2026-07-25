@@ -471,6 +471,48 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun autoWriteChapters(count: Int) {
+        val project = selectedProject.value ?: return
+        if (isGenerating.value) return
+        val total = count.coerceIn(1, 5)
+        isGenerating.value = true
+        message.value = "自动写作已启动：准备生成 $total 章"
+        generationJob = viewModelScope.launch {
+            try {
+                val workingChapters = chapters.value.toMutableList()
+                repeat(total) { index ->
+                    if (!isActive) return@launch
+                    val id = repository.addChapter(project.id)
+                    val nextNumber = (workingChapters.maxOfOrNull { it.number } ?: 0) + 1
+                    val target = Chapter(id = id, projectId = project.id, number = nextNumber, title = "第${nextNumber}章")
+                    val context = ContextEngine.build(project, target, workingChapters, storyItems.value, anchors.value).prompt +
+                        "\n这是批量写作的第${index + 1}/${total} 章。请完整写出本章。"
+                    val result = modelClient.writeFullChapter(modelConfig.value, context)
+                    if (!isActive) return@launch
+                    val body = result.getOrElse {
+                        message.value = "自动写作在第${nextNumber}章停止：${it.message ?: "模型请求失败"}"
+                        selectedChapterId.value = id
+                        return@launch
+                    }
+                    val completed = target.copy(content = body)
+                    val warnings = QualityGate.inspect(completed, storyItems.value, anchors.value)
+                        .filter { it.severity == QualitySeverity.WARNING }
+                    repository.updateChapter(target, body)
+                    workingChapters += completed
+                    selectedChapterId.value = id
+                    if (warnings.isNotEmpty()) {
+                        message.value = "第${nextNumber}章已生成但门禁提示 ${warnings.size} 项，自动写作已停止"
+                        return@launch
+                    }
+                    message.value = "已完成第${nextNumber}章（${index + 1}/${total}）"
+                }
+                message.value = "批量写作完成，共生成 ${total} 章"
+            } finally {
+                isGenerating.value = false
+            }
+        }
+    }
+
     fun cancelGeneration() {
         if (!isGenerating.value) return
         modelClient.cancelActiveRequest()
