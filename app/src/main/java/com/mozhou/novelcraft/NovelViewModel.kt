@@ -15,6 +15,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import java.io.File
 
 private data class WritingContextInput(
     val project: NovelProject?,
@@ -200,6 +201,28 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun deleteCurrentChapter() {
+        val chapter = selectedChapter.value ?: return
+        viewModelScope.launch {
+            runCatching { repository.deleteChapter(chapter) }
+                .onSuccess {
+                    selectedChapterId.value = null
+                    message.value = "已删除第${chapter.number}章"
+                }
+                .onFailure { message.value = it.message ?: "删除章节失败" }
+        }
+    }
+
+    fun deleteCurrentProject() {
+        val project = selectedProject.value ?: return
+        viewModelScope.launch {
+            repository.deleteProject(project)
+            selectedProjectId.value = null
+            selectedChapterId.value = null
+            message.value = "已删除《${project.title}》"
+        }
+    }
+
     fun saveChapterPlan(outline: String, targetWordCount: Int) {
         val chapter = selectedChapter.value ?: return
         savePlanJob?.cancel()
@@ -224,6 +247,53 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         saveStyleJob = viewModelScope.launch {
             delay(500)
             repository.updateProjectStyle(project, styleGuide)
+        }
+    }
+
+    fun saveProjectProfile(
+        genre: String,
+        premise: String,
+        summary: String,
+        tags: String,
+        targetAudience: String,
+        protagonistName: String,
+    ) {
+        val project = selectedProject.value ?: return
+        viewModelScope.launch {
+            repository.updateProjectProfile(project, genre, premise, summary, tags, targetAudience, protagonistName)
+            message.value = "作品资料已保存"
+        }
+    }
+
+    fun generateCover() {
+        val project = selectedProject.value ?: return
+        val request = beginGeneration(GenerationTask.COVER) ?: return
+        message.value = "正在生成封面..."
+        val prompt = buildString {
+            append("Create a polished vertical Chinese web novel cover illustration. ")
+            append("No text, no typography, no logo, no watermark. ")
+            append("Title concept: ${project.title}. ")
+            if (project.genre.isNotBlank()) append("Genre: ${project.genre}. ")
+            if (project.summary.isNotBlank()) append("Synopsis: ${project.summary.take(600)}. ")
+            if (project.tags.isNotBlank()) append("Tags: ${project.tags}. ")
+            if (project.protagonistName.isNotBlank()) append("Protagonist: ${project.protagonistName}. ")
+            append("Portrait 2:3 composition, a clear focal subject, cinematic lighting, detailed commercial illustration.")
+        }
+        generationJobs[GenerationTask.COVER] = viewModelScope.launch {
+            try {
+                modelClient.generateCover(modelConfig.value, prompt, request).fold(
+                    onSuccess = { bytes ->
+                        val folder = File(getApplication<Application>().filesDir, "covers").apply { mkdirs() }
+                        val file = File(folder, "cover-${project.id}.png")
+                        file.writeBytes(bytes)
+                        repository.updateCover(project, file.absolutePath)
+                        message.value = "封面已保存到本机书架"
+                    },
+                    onFailure = { message.value = it.message ?: "封面生成失败" },
+                )
+            } finally {
+                finishGeneration(GenerationTask.COVER, request)
+            }
         }
     }
 

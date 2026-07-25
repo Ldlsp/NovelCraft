@@ -25,6 +25,11 @@ data class NovelProject(
     val premise: String,
     val styleGuide: String = "",
     val outlineRevisionReport: String = "",
+    val summary: String = "",
+    val tags: String = "",
+    val targetAudience: String = "",
+    val protagonistName: String = "",
+    val coverPath: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 )
@@ -146,6 +151,9 @@ interface ProjectDao {
 
     @Query("UPDATE projects SET updatedAt = :updatedAt WHERE id = :projectId")
     suspend fun touch(projectId: Long, updatedAt: Long)
+
+    @Query("DELETE FROM projects WHERE id = :projectId")
+    suspend fun deleteById(projectId: Long)
 }
 
 @Dao
@@ -164,6 +172,12 @@ interface ChapterDao {
 
     @Query("SELECT MAX(number) FROM chapters WHERE projectId = :projectId")
     suspend fun maxNumber(projectId: Long): Int?
+
+    @Query("SELECT COUNT(*) FROM chapters WHERE projectId = :projectId")
+    suspend fun countByProject(projectId: Long): Int
+
+    @Query("DELETE FROM chapters WHERE id = :chapterId")
+    suspend fun deleteById(chapterId: Long)
 }
 
 @Dao
@@ -207,7 +221,7 @@ interface StoryEdgeDao {
 
 @Database(
     entities = [NovelProject::class, Chapter::class, StoryItem::class, StoryAnchor::class, StoryEdge::class],
-    version = 7,
+    version = 8,
     exportSchema = false,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -284,11 +298,20 @@ abstract class NovelDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE story_edges ADD COLUMN cascadePending INTEGER NOT NULL DEFAULT 0")
             }
         }
+        private val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE projects ADD COLUMN summary TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE projects ADD COLUMN tags TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE projects ADD COLUMN targetAudience TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE projects ADD COLUMN protagonistName TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE projects ADD COLUMN coverPath TEXT NOT NULL DEFAULT ''")
+            }
+        }
 
         fun create(context: Context): NovelDatabase = Room.databaseBuilder(
             context.applicationContext,
             NovelDatabase::class.java,
             "novelcraft.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8).build()
     }
 }

@@ -1,6 +1,10 @@
 package com.mozhou.novelcraft
 
 import android.os.Bundle
+import android.graphics.BitmapFactory
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -11,9 +15,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
@@ -26,9 +32,11 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.FileOpen
 import androidx.compose.material.icons.outlined.FileDownload
 import androidx.compose.material.icons.outlined.Key
+import androidx.compose.material.icons.outlined.Image as CoverImage
 import androidx.compose.material.icons.outlined.Lightbulb
 import androidx.compose.material.icons.outlined.MenuBook
 import androidx.compose.material.icons.outlined.People
@@ -67,12 +75,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import java.io.File
 
 private val Ink = Color(0xFF1C1C1E)
 private val Paper = Color(0xFFF2F2F7)
@@ -97,7 +108,7 @@ class MainActivity : ComponentActivity() {
 }
 
 private enum class MainDestination { SHELF, WORKSPACE, SETTINGS }
-private enum class WorkspaceTab(val label: String) { WRITE("写作"), OUTLINE("大纲"), RESOURCES("资料"), REVIEW("审核") }
+private enum class WorkspaceTab(val label: String) { WRITE("写作"), PROJECT("作品"), OUTLINE("大纲"), RESOURCES("资料"), REVIEW("审核") }
 
 @Composable
 private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
@@ -209,6 +220,10 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onSaveChapter = viewModel::saveChapter,
                                 onRenameChapter = viewModel::renameChapter,
                                 onAddChapter = viewModel::addChapter,
+                                onDeleteChapter = viewModel::deleteCurrentChapter,
+                                onDeleteProject = viewModel::deleteCurrentProject,
+                                onSaveProjectProfile = viewModel::saveProjectProfile,
+                                onGenerateCover = viewModel::generateCover,
                                 onSaveChapterPlan = viewModel::saveChapterPlan,
                                 onSaveBeatSheet = viewModel::saveBeatSheet,
                                 onSaveStyleGuide = viewModel::saveStyleGuide,
@@ -337,8 +352,11 @@ private fun ShelfScreen(
                 }
             }
         } else {
-            items(projects, key = { it.id }) { project ->
-                ProjectRow(project, onOpen)
+            items(projects.chunked(2), key = { row -> row.first().id }) { row ->
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    row.forEach { project -> ProjectShelfItem(project, Modifier.weight(1f), onOpen) }
+                    if (row.size == 1) Spacer(Modifier.weight(1f))
+                }
             }
         }
     }
@@ -358,19 +376,31 @@ private fun ActionCard(title: String, detail: String, icon: androidx.compose.ui.
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ProjectRow(project: NovelProject, onOpen: (NovelProject) -> Unit) {
-    Card(onClick = { onOpen(project) }) {
-        Row(Modifier.fillMaxWidth().padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Outlined.MenuBook, null, tint = Teal)
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text(project.title, style = MaterialTheme.typography.titleMedium)
-                Text(project.genre, color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
-                if (project.premise.isNotBlank()) {
-                    Text(project.premise, maxLines = 1, overflow = TextOverflow.Ellipsis, color = SecondaryLabel, style = MaterialTheme.typography.labelSmall)
-                }
+private fun ProjectShelfItem(project: NovelProject, modifier: Modifier, onOpen: (NovelProject) -> Unit) {
+    Card(onClick = { onOpen(project) }, modifier = modifier) {
+        Column(Modifier.padding(8.dp)) {
+            ProjectCover(project, Modifier.fillMaxWidth().aspectRatio(0.68f))
+            Spacer(Modifier.height(8.dp))
+            Text(project.title, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(project.genre.ifBlank { "待分类" }, color = SecondaryLabel, style = MaterialTheme.typography.labelSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun ProjectCover(project: NovelProject, modifier: Modifier = Modifier) {
+    val bitmap = remember(project.coverPath) {
+        project.coverPath.takeIf { it.isNotBlank() }?.let { path -> BitmapFactory.decodeFile(path)?.asImageBitmap() }
+    }
+    if (bitmap != null) {
+        Image(bitmap = bitmap, contentDescription = "${project.title}封面", contentScale = ContentScale.Crop, modifier = modifier.clip(RoundedCornerShape(8.dp)))
+    } else {
+        Box(modifier = modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF173A5E)), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally, modifier = Modifier.padding(12.dp)) {
+                Icon(Icons.Outlined.MenuBook, null, tint = Color.White)
+                Spacer(Modifier.height(6.dp))
+                Text(project.title.take(10), color = Color.White, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-            Icon(Icons.Outlined.Book, null, tint = Red)
         }
     }
 }
@@ -401,6 +431,10 @@ private fun WorkspaceScreen(
     onSaveChapter: (String) -> Unit,
     onRenameChapter: (String) -> Unit,
     onAddChapter: () -> Unit,
+    onDeleteChapter: () -> Unit,
+    onDeleteProject: () -> Unit,
+    onSaveProjectProfile: (String, String, String, String, String, String) -> Unit,
+    onGenerateCover: () -> Unit,
     onSaveChapterPlan: (String, Int) -> Unit,
     onSaveBeatSheet: (String) -> Unit,
     onSaveStyleGuide: (String) -> Unit,
@@ -431,7 +465,16 @@ private fun WorkspaceScreen(
         when (WorkspaceTab.entries[selectedTab]) {
             WorkspaceTab.WRITE -> WriteTab(
                 chapters, selectedChapter, contextPacket, config, activeTasks,
-                onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate, onAutoWrite, onCancelGeneration,
+                onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onDeleteChapter, onGenerate, onAutoWrite, onCancelGeneration,
+            )
+            WorkspaceTab.PROJECT -> ProjectTab(
+                project = project,
+                isCoverGenerating = GenerationTask.COVER in activeTasks,
+                hasImageConfig = config.imageBaseUrl.isNotBlank() && config.imageApiKey.isNotBlank() && config.imageModel.isNotBlank(),
+                onSaveProfile = onSaveProjectProfile,
+                onGenerateCover = onGenerateCover,
+                onCancelCover = { onCancelGeneration(GenerationTask.COVER) },
+                onDeleteProject = onDeleteProject,
             )
             WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, activeTasks, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor, onReviseOutline, onResolveOutlineCascade)
             WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, GenerationTask.MEMORY_EXTRACTION in activeTasks, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory, { onCancelGeneration(GenerationTask.MEMORY_EXTRACTION) })
@@ -457,6 +500,81 @@ private fun GenerationTaskBar(activeTasks: Set<GenerationTask>, onCancel: (Gener
     }
 }
 
+@Composable
+private fun ProjectTab(
+    project: NovelProject,
+    isCoverGenerating: Boolean,
+    hasImageConfig: Boolean,
+    onSaveProfile: (String, String, String, String, String, String) -> Unit,
+    onGenerateCover: () -> Unit,
+    onCancelCover: () -> Unit,
+    onDeleteProject: () -> Unit,
+) {
+    var genre by remember(project) { mutableStateOf(project.genre) }
+    var premise by remember(project) { mutableStateOf(project.premise) }
+    var summary by remember(project) { mutableStateOf(project.summary) }
+    var tags by remember(project) { mutableStateOf(project.tags) }
+    var audience by remember(project) { mutableStateOf(project.targetAudience) }
+    var protagonist by remember(project) { mutableStateOf(project.protagonistName) }
+    var deleteVisible by rememberSaveable { mutableStateOf(false) }
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item {
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(16.dp), verticalAlignment = Alignment.CenterVertically) {
+                ProjectCover(project, Modifier.width(132.dp).aspectRatio(0.68f))
+                Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(project.title, style = MaterialTheme.typography.headlineSmall)
+                    Text("作品资料", color = Red, style = MaterialTheme.typography.labelMedium)
+                    Text("封面由独立图像 AI 生成并保存在本机书架。", color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
+                    Button(
+                        onClick = if (isCoverGenerating) onCancelCover else onGenerateCover,
+                        enabled = isCoverGenerating || hasImageConfig,
+                    ) {
+                        Icon(if (isCoverGenerating) Icons.Outlined.Close else Icons.Outlined.CoverImage, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (isCoverGenerating) "取消封面" else "生成封面")
+                    }
+                }
+            }
+            if (!hasImageConfig) ActionHint("先在“我的”配置独立的封面 AI。封面生成不会使用文本模型，也不需要你填写绘图提示词。")
+        }
+        item {
+            Card {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("作品设定", style = MaterialTheme.typography.titleMedium)
+                    OutlinedTextField(value = genre, onValueChange = { genre = it }, label = { Text("题材") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = premise, onValueChange = { premise = it }, label = { Text("一句话设定") }, minLines = 2, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = summary, onValueChange = { summary = it }, label = { Text("小说简介") }, minLines = 3, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = tags, onValueChange = { tags = it }, label = { Text("标签，用逗号分隔") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = audience, onValueChange = { audience = it }, label = { Text("目标读者") }, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = protagonist, onValueChange = { protagonist = it }, label = { Text("主角名") }, modifier = Modifier.fillMaxWidth())
+                    Button(onClick = { onSaveProfile(genre, premise, summary, tags, audience, protagonist) }, modifier = Modifier.fillMaxWidth()) { Text("保存作品资料") }
+                    ActionHint("简介、标签、目标读者和主角名会自动用于封面构图与后续 AI 写作上下文。")
+                }
+            }
+        }
+        item {
+            TextButton(onClick = { deleteVisible = true }) {
+                Icon(Icons.Outlined.Delete, null, tint = Color(0xFFFF3B30))
+                Spacer(Modifier.width(4.dp))
+                Text("删除整部作品", color = Color(0xFFFF3B30))
+            }
+        }
+    }
+    if (deleteVisible) {
+        AlertDialog(
+            onDismissRequest = { deleteVisible = false },
+            title = { Text("删除《${project.title}》？") },
+            text = { Text("章节、资料、大纲与本地封面都会删除，无法恢复。") },
+            confirmButton = { Button(onClick = { onDeleteProject(); deleteVisible = false }) { Text("删除作品") } },
+            dismissButton = { TextButton(onClick = { deleteVisible = false }) { Text("取消") } },
+        )
+    }
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun WriteTab(
@@ -469,6 +587,7 @@ private fun WriteTab(
     onSave: (String) -> Unit,
     onRename: (String) -> Unit,
     onAddChapter: () -> Unit,
+    onDeleteChapter: () -> Unit,
     onGenerate: () -> Unit,
     onAutoWrite: (Int) -> Unit,
     onCancel: (GenerationTask) -> Unit,
@@ -481,10 +600,11 @@ private fun WriteTab(
     var title by remember(chapter.id, chapter.title) { mutableStateOf(chapter.title) }
     var continueDialogVisible by rememberSaveable { mutableStateOf(false) }
     var autoWriteDialogVisible by rememberSaveable { mutableStateOf(false) }
+    var deleteChapterVisible by rememberSaveable { mutableStateOf(false) }
     val isContinuing = GenerationTask.CONTINUATION in activeTasks
     val isAutoWriting = GenerationTask.AUTO_WRITE in activeTasks
     Column(Modifier.fillMaxSize().padding(16.dp)) {
-        ChapterRail(chapters, chapter.id, onSelectChapter, onAddChapter, enabled = true)
+        ChapterRail(chapters, chapter.id, onSelectChapter)
         OutlinedTextField(
             value = title,
             onValueChange = { title = it; onRename(it) },
@@ -522,6 +642,7 @@ private fun WriteTab(
                     Text("AI 续写")
                 }
             }
+            OutlinedButton(onClick = onAddChapter, modifier = Modifier.width(104.dp)) { Text("写下一章") }
             IconButton(onClick = { onSave(draft) }, modifier = Modifier.width(56.dp).height(48.dp)) {
                 Icon(Icons.Outlined.Save, "保存", tint = Red)
             }
@@ -531,7 +652,10 @@ private fun WriteTab(
                 enabled = isAutoWriting || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
             ) { Text(if (isAutoWriting) "取消批量" else "批量") }
         }
-        ActionHint("AI 续写会接在当前章节末尾，不会新建下一章；批量会依次新建后续章节；保存会立即写入本机。")
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(onClick = { deleteChapterVisible = true }, enabled = chapters.size > 1) { Text("删除本章", color = Color(0xFFFF3B30)) }
+        }
+        ActionHint("AI 续写会接在当前章节末尾；写下一章会新建空白章节；批量会依次新建并生成后续章节；保存会立即写入本机。")
         if (config.baseUrl.isBlank() || config.apiKey.isBlank() || config.model.isBlank()) {
             Text("请先在“我的”填写 Base URL、API Key 与模型名称。", color = Gold, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
         }
@@ -548,6 +672,15 @@ private fun WriteTab(
             packet = contextPacket,
             onDismiss = { autoWriteDialogVisible = false },
             onStart = { count -> onAutoWrite(count); autoWriteDialogVisible = false },
+        )
+    }
+    if (deleteChapterVisible) {
+        AlertDialog(
+            onDismissRequest = { deleteChapterVisible = false },
+            title = { Text("删除第${chapter.number}章？") },
+            text = { Text("正文、计划和分镜会从本机删除，无法恢复。") },
+            confirmButton = { Button(onClick = { onDeleteChapter(); deleteChapterVisible = false }) { Text("删除") } },
+            dismissButton = { TextButton(onClick = { deleteChapterVisible = false }) { Text("取消") } },
         )
     }
 }
@@ -597,7 +730,7 @@ private fun AutoWriteDialog(packet: ContextPacket, onDismiss: () -> Unit, onStar
 }
 
 @Composable
-private fun ChapterRail(chapters: List<Chapter>, selectedId: Long, onSelect: (Long) -> Unit, onAdd: () -> Unit, enabled: Boolean) {
+private fun ChapterRail(chapters: List<Chapter>, selectedId: Long, onSelect: (Long) -> Unit) {
     LazyRow(
         horizontalArrangement = Arrangement.spacedBy(4.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -609,9 +742,6 @@ private fun ChapterRail(chapters: List<Chapter>, selectedId: Long, onSelect: (Lo
             } else {
                 TextButton(onClick = { onSelect(item.id) }) { Text("第${item.number}章") }
             }
-        }
-        item {
-            IconButton(onClick = onAdd, enabled = enabled) { Icon(Icons.Outlined.Add, "新建章节") }
         }
     }
 }
@@ -1089,6 +1219,9 @@ private fun ModelSettingsScreen(config: ModelConfig, onSave: (ModelConfig) -> Un
     var baseUrl by remember(config) { mutableStateOf(config.baseUrl) }
     var apiKey by remember(config) { mutableStateOf(config.apiKey) }
     var model by remember(config) { mutableStateOf(config.model) }
+    var imageBaseUrl by remember(config) { mutableStateOf(config.imageBaseUrl) }
+    var imageApiKey by remember(config) { mutableStateOf(config.imageApiKey) }
+    var imageModel by remember(config) { mutableStateOf(config.imageModel) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         item {
             Text("模型连接", color = Red, style = MaterialTheme.typography.labelMedium)
@@ -1105,7 +1238,14 @@ private fun ModelSettingsScreen(config: ModelConfig, onSave: (ModelConfig) -> Un
             OutlinedTextField(value = model, onValueChange = { model = it }, label = { Text("模型名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
         }
         item {
-            val current = ModelConfig(baseUrl = baseUrl, apiKey = apiKey, model = model)
+            val current = ModelConfig(
+                baseUrl = baseUrl,
+                apiKey = apiKey,
+                model = model,
+                imageBaseUrl = imageBaseUrl,
+                imageApiKey = imageApiKey,
+                imageModel = imageModel,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Button(onClick = { onSave(current) }) {
                     Icon(Icons.Outlined.Key, null)
@@ -1121,6 +1261,19 @@ private fun ModelSettingsScreen(config: ModelConfig, onSave: (ModelConfig) -> Un
                     Text("内置网文工作流", style = MaterialTheme.typography.titleSmall)
                     Text("不需要填写提示词。续写、章节计划、场景分镜、文风提取、知识图谱和修复计划均使用内置模板，并自动带入当前章节、资料卡、大纲锚点与文风档案。", color = Ink, style = MaterialTheme.typography.bodySmall)
                     ActionHint("保存到本机：加密保存这三项连接信息；测试连接：只验证模型接口是否可用，不会生成任何小说内容。")
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = SurfaceWhite)) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("封面 AI", style = MaterialTheme.typography.titleMedium)
+                    Text("独立于文本模型，用于生成书架封面。", color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(value = imageBaseUrl, onValueChange = { imageBaseUrl = it }, label = { Text("封面 AI Base URL（HTTPS）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = imageApiKey, onValueChange = { imageApiKey = it }, label = { Text("封面 AI API Key") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = imageModel, onValueChange = { imageModel = it }, label = { Text("封面 AI 模型名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedButton(onClick = { onSave(ModelConfig(baseUrl = baseUrl, apiKey = apiKey, model = model, imageBaseUrl = imageBaseUrl, imageApiKey = imageApiKey, imageModel = imageModel)) }, modifier = Modifier.fillMaxWidth()) { Text("保存全部连接") }
+                    ActionHint("需要支持 OpenAI 兼容的 /images/generations 接口。保存到本机会同时加密保存文本与封面 AI 的连接信息。")
                 }
             }
         }

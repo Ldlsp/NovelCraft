@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.Uri
 import androidx.room.withTransaction
 import kotlinx.coroutines.flow.Flow
+import java.io.File
 
 class NovelRepository(private val database: NovelDatabase) {
     fun projects(): Flow<List<NovelProject>> = database.projectDao().observeAll()
@@ -48,6 +49,37 @@ class NovelRepository(private val database: NovelDatabase) {
         database.projectDao().update(project.copy(styleGuide = styleGuide.trim(), updatedAt = System.currentTimeMillis()))
     }
 
+    suspend fun updateProjectProfile(
+        project: NovelProject,
+        genre: String,
+        premise: String,
+        summary: String,
+        tags: String,
+        targetAudience: String,
+        protagonistName: String,
+    ) {
+        database.projectDao().update(
+            project.copy(
+                genre = genre.trim().ifBlank { "待分类" },
+                premise = premise.trim(),
+                summary = summary.trim(),
+                tags = tags.trim(),
+                targetAudience = targetAudience.trim(),
+                protagonistName = protagonistName.trim(),
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
+    }
+
+    suspend fun updateCover(project: NovelProject, coverPath: String) {
+        database.projectDao().update(project.copy(coverPath = coverPath, updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun deleteProject(project: NovelProject) {
+        database.projectDao().deleteById(project.id)
+        if (project.coverPath.isNotBlank()) File(project.coverPath).delete()
+    }
+
     suspend fun applyOutlineCascade(project: NovelProject, report: OutlineCascadeReport, items: List<StoryItem>, anchors: List<StoryAnchor>, edges: List<StoryEdge>) = database.withTransaction {
         database.storyItemDao().updateAll(items.filter { it.id in report.affectedItemIds }.map { it.copy(cascadePending = true) })
         database.storyAnchorDao().updateAll(anchors.filter { it.id in report.affectedAnchorIds }.map { it.copy(cascadePending = true) })
@@ -88,6 +120,14 @@ class NovelRepository(private val database: NovelDatabase) {
         val id = database.chapterDao().insert(Chapter(projectId = projectId, number = number, title = "第${number}章", updatedAt = timestamp))
         database.projectDao().touch(projectId, timestamp)
         return id
+    }
+
+    suspend fun deleteChapter(chapter: Chapter) {
+        require(database.chapterDao().countByProject(chapter.projectId) > 1) { "至少保留一章" }
+        database.withTransaction {
+            database.chapterDao().deleteById(chapter.id)
+            database.projectDao().touch(chapter.projectId, System.currentTimeMillis())
+        }
     }
 
     suspend fun addCompletedChapter(projectId: Long, content: String, qualityStatus: String, qualityIssueSummary: String): Chapter = database.withTransaction {

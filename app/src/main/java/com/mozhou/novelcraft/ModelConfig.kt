@@ -14,6 +14,9 @@ data class ModelConfig(
     val baseUrl: String = "",
     val apiKey: String = "",
     val model: String = "",
+    val imageBaseUrl: String = "",
+    val imageApiKey: String = "",
+    val imageModel: String = "",
 )
 
 class ModelPreferences(context: Context) {
@@ -33,6 +36,9 @@ class ModelPreferences(context: Context) {
         baseUrl = preferences.getString("base_url", "").orEmpty(),
         apiKey = preferences.getString("api_key", "").orEmpty(),
         model = preferences.getString("model", "").orEmpty(),
+        imageBaseUrl = preferences.getString("image_base_url", "").orEmpty(),
+        imageApiKey = preferences.getString("image_api_key", "").orEmpty(),
+        imageModel = preferences.getString("image_model", "").orEmpty(),
     )
 
     fun save(config: ModelConfig) {
@@ -41,6 +47,9 @@ class ModelPreferences(context: Context) {
             .putString("base_url", config.baseUrl.trim().trimEnd('/'))
             .putString("api_key", config.apiKey.trim())
             .putString("model", config.model.trim())
+            .putString("image_base_url", config.imageBaseUrl.trim().trimEnd('/'))
+            .putString("image_api_key", config.imageApiKey.trim())
+            .putString("image_model", config.imageModel.trim())
             .apply()
     }
 }
@@ -122,6 +131,44 @@ class OpenAiCompatibleClient {
         systemInstruction = "你是中文网文风格编辑。仅根据给出的样章，提取一个可执行的项目文风档案：叙事视角、时态、句长和节奏、对话比例、描写偏好、禁用表达、章末钩子习惯。用紧凑中文分点，不评价原文，不仿照在世作者，不输出小说正文。",
         request = request,
     )
+
+    suspend fun generateCover(config: ModelConfig, prompt: String, request: GenerationRequest? = null): Result<ByteArray> = withContext(Dispatchers.IO) {
+        runCatching {
+            require(config.imageBaseUrl.startsWith("https://")) { "请先填写封面 AI 的 Base URL" }
+            require(config.imageApiKey.isNotBlank()) { "请先填写封面 AI 的 API Key" }
+            require(config.imageModel.isNotBlank()) { "请先填写封面 AI 的模型名称" }
+            val connection = URL(config.imageBaseUrl.trimEnd('/') + "/images/generations").openConnection() as HttpURLConnection
+            request?.connection = connection
+            try {
+                val body = JSONObject().apply {
+                    put("model", config.imageModel)
+                    put("prompt", prompt)
+                    put("size", "1024x1536")
+                    put("response_format", "b64_json")
+                }.toString()
+                connection.requestMethod = "POST"
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.setRequestProperty("Authorization", "Bearer " + config.imageApiKey)
+                connection.connectTimeout = 20_000
+                connection.readTimeout = 120_000
+                connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                val status = connection.responseCode
+                val response = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                    ?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (status !in 200..299) error("封面接口返回 HTTP $status: ${response.take(180)}")
+                val data = JSONObject(response).getJSONArray("data").getJSONObject(0)
+                when {
+                    data.has("b64_json") -> android.util.Base64.decode(data.getString("b64_json"), android.util.Base64.DEFAULT)
+                    data.has("url") -> URL(data.getString("url")).openStream().use { it.readBytes() }
+                    else -> error("封面接口没有返回图片数据")
+                }
+            } finally {
+                if (request?.connection === connection) request.connection = null
+                connection.disconnect()
+            }
+        }
+    }
 
     private suspend fun chat(
         config: ModelConfig,

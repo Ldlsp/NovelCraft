@@ -8,6 +8,7 @@ enum class GenerationTask(val label: String) {
     STYLE_GUIDE("文风提取"),
     MEMORY_EXTRACTION("知识图谱"),
     REPAIR_PLAN("修复计划"),
+    COVER("封面"),
 }
 
 class GenerationRequest {
