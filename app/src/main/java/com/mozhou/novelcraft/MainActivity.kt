@@ -214,6 +214,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onCancelGeneration = viewModel::cancelGeneration,
                                 onGenerateRepairPlan = viewModel::generateRepairPlan,
                                 onMarkQualityRepaired = viewModel::markCurrentChapterQualityRepaired,
+                                onReviseOutline = viewModel::reviseOutline,
                             )
                         }
                     }
@@ -404,6 +405,7 @@ private fun WorkspaceScreen(
     onCancelGeneration: () -> Unit,
     onGenerateRepairPlan: () -> Unit,
     onMarkQualityRepaired: () -> Unit,
+    onReviseOutline: (Int, String) -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
@@ -417,7 +419,7 @@ private fun WorkspaceScreen(
                 chapters, selectedChapter, contextPacket, config, isGenerating,
                 onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate, onAutoWrite, onCancelGeneration,
             )
-            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor)
+            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor, onReviseOutline)
             WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, isGenerating, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory)
             WorkspaceTab.REVIEW -> ReviewTab(selectedChapter, qualityIssues, repairPlan, config, isGenerating, onGenerateRepairPlan, onMarkQualityRepaired, onCancelGeneration)
         }
@@ -608,13 +610,17 @@ private fun OutlineTab(
     onExtractStyleGuide: () -> Unit,
     onCancel: () -> Unit,
     onAddAnchor: (Int, Int, String, String, String, String, String) -> Unit,
+    onReviseOutline: (Int, String) -> Unit,
 ) {
     var anchorDialogVisible by rememberSaveable { mutableStateOf(false) }
+    var reviseDialogVisible by rememberSaveable { mutableStateOf(false) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text(project.genre + " · " + project.title, color = Red, style = MaterialTheme.typography.labelMedium)
             Text("章节大纲", style = MaterialTheme.typography.headlineSmall)
             if (project.premise.isNotBlank()) Text(project.premise, color = Color.Gray)
+            OutlinedButton(onClick = { reviseDialogVisible = true }, modifier = Modifier.padding(top = 8.dp)) { Text("改纲级联") }
+            if (project.outlineRevisionReport.isNotBlank()) Text(project.outlineRevisionReport, color = Gold, style = MaterialTheme.typography.labelSmall)
         }
         item { StyleGuideEditor(project.styleGuide, config, isGenerating, onSaveStyleGuide, onExtractStyleGuide, onCancel) }
         item {
@@ -659,6 +665,30 @@ private fun OutlineTab(
             },
         )
     }
+    if (reviseDialogVisible) {
+        OutlineRevisionDialog(
+            initialChapter = selectedChapter?.number ?: 1,
+            onDismiss = { reviseDialogVisible = false },
+            onApply = { from, description -> onReviseOutline(from, description); reviseDialogVisible = false },
+        )
+    }
+}
+
+@Composable
+private fun OutlineRevisionDialog(initialChapter: Int, onDismiss: () -> Unit, onApply: (Int, String) -> Unit) {
+    var fromChapter by remember { mutableStateOf(initialChapter.toString()) }
+    var description by remember { mutableStateOf("") }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("改纲级联") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("从指定章节起标记受影响锚点、资料卡和关系，继续写作前需逐项复核。")
+            OutlinedTextField(value = fromChapter, onValueChange = { fromChapter = it.filter(Char::isDigit) }, label = { Text("起始章节") }, singleLine = true)
+            OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("改纲说明") }, minLines = 2)
+        } },
+        confirmButton = { Button(onClick = { onApply(fromChapter.toIntOrNull() ?: initialChapter, description) }) { Text("生成影响报告") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
+    )
 }
 
 @Composable

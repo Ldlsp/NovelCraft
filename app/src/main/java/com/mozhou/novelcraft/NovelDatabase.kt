@@ -24,6 +24,7 @@ data class NovelProject(
     val genre: String,
     val premise: String,
     val styleGuide: String = "",
+    val outlineRevisionReport: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 )
@@ -75,6 +76,7 @@ data class StoryItem(
     val detail: String,
     val status: String = StoryItemStatus.ACTIVE,
     val updatedAt: Long = System.currentTimeMillis(),
+    val cascadePending: Boolean = false,
 )
 
 @Entity(
@@ -97,6 +99,7 @@ data class StoryAnchor(
     val allowedPlot: String = "",
     val forbiddenReveals: String = "",
     val mandatoryTension: String = "",
+    val cascadePending: Boolean = false,
 )
 
 @Entity(
@@ -118,6 +121,7 @@ data class StoryEdge(
     val strength: Float = 0.5f,
     val description: String = "",
     val sinceChapter: Int = 1,
+    val cascadePending: Boolean = false,
 )
 
 object StoryItemStatus {
@@ -172,6 +176,9 @@ interface StoryItemDao {
 
     @Update
     suspend fun update(item: StoryItem)
+
+    @Update
+    suspend fun updateAll(items: List<StoryItem>)
 }
 
 @Dao
@@ -181,6 +188,9 @@ interface StoryAnchorDao {
 
     @Insert
     suspend fun insert(anchor: StoryAnchor): Long
+
+    @Update
+    suspend fun updateAll(anchors: List<StoryAnchor>)
 }
 
 @Dao
@@ -190,11 +200,14 @@ interface StoryEdgeDao {
 
     @Insert
     suspend fun insert(edge: StoryEdge): Long
+
+    @Update
+    suspend fun updateAll(edges: List<StoryEdge>)
 }
 
 @Database(
     entities = [NovelProject::class, Chapter::class, StoryItem::class, StoryAnchor::class, StoryEdge::class],
-    version = 6,
+    version = 7,
     exportSchema = false,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -263,11 +276,19 @@ abstract class NovelDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE chapters ADD COLUMN qualityIssueSummary TEXT NOT NULL DEFAULT ''")
             }
         }
+        private val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE projects ADD COLUMN outlineRevisionReport TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE story_items ADD COLUMN cascadePending INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE story_anchors ADD COLUMN cascadePending INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE story_edges ADD COLUMN cascadePending INTEGER NOT NULL DEFAULT 0")
+            }
+        }
 
         fun create(context: Context): NovelDatabase = Room.databaseBuilder(
             context.applicationContext,
             NovelDatabase::class.java,
             "novelcraft.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7).build()
     }
 }

@@ -528,6 +528,15 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun reviseOutline(fromChapter: Int, description: String) {
+        val project = selectedProject.value ?: return
+        val report = OutlineCascadeAnalyzer.analyze(fromChapter, chapters.value, storyItems.value, anchors.value, edges.value, description)
+        viewModelScope.launch {
+            repository.applyOutlineCascade(project, report, storyItems.value, anchors.value, edges.value)
+            message.value = report.summary + " 已标记为待审，请在资料和大纲页逐项确认。"
+        }
+    }
+
     fun markCurrentChapterQualityRepaired() {
         val chapter = selectedChapter.value ?: return
         viewModelScope.launch {

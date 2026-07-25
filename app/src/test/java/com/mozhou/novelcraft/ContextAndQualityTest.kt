@@ -81,4 +81,23 @@ class ContextAndQualityTest {
         assertTrue(packet.prompt.contains("linked"))
         assertTrue(packet.prompt.contains("Lena"))
     }
+
+    @Test
+    fun cascadesFromFutureEdgesAcrossConnectedStoryItems() {
+        val a = StoryItem(id = 1, projectId = 1, kind = "人物", name = "Lena", detail = "")
+        val b = StoryItem(id = 2, projectId = 1, kind = "物品", name = "Cipher", detail = "")
+        val c = StoryItem(id = 3, projectId = 1, kind = "地点", name = "Vault", detail = "")
+        val report = OutlineCascadeAnalyzer.analyze(
+            4,
+            listOf(Chapter(projectId = 1, number = 4, title = "Change", outline = "Cipher route")),
+            listOf(a, b, c),
+            listOf(StoryAnchor(id = 9, projectId = 1, startChapter = 3, endChapter = 8, title = "Arc", coreConflict = "Test")),
+            listOf(StoryEdge(id = 10, projectId = 1, sourceItemId = a.id, targetItemId = b.id, relation = "owns", sinceChapter = 4), StoryEdge(id = 11, projectId = 1, sourceItemId = b.id, targetItemId = c.id, relation = "hidden at", sinceChapter = 1)),
+            "Change route",
+        )
+
+        assertEquals(setOf(1L, 2L, 3L), report.affectedItemIds)
+        assertEquals(setOf(10L, 11L), report.affectedEdgeIds)
+        assertEquals(setOf(9L), report.affectedAnchorIds)
+    }
 }
