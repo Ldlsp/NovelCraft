@@ -15,7 +15,7 @@ class ContextAndQualityTest {
         val resolved = StoryItem(id = 5, projectId = 1, kind = "伏笔", name = "月契", detail = "已经在上一章回收。", status = StoryItemStatus.RESOLVED)
         val anchor = StoryAnchor(projectId = 1, startChapter = 2, endChapter = 8, title = "港口迷局", coreConflict = "沈舟必须找到失踪姐姐的线索", forbiddenReveals = "姐姐的真实下落")
 
-        val packet = ContextEngine.build(project, current, listOf(previous, current), listOf(memory, resolved), listOf(anchor))
+        val packet = ContextEngine.build(project.copy(styleGuide = "第三人称限知，短句推进，章末留钩子"), current, listOf(previous, current), listOf(memory, resolved), listOf(anchor))
 
         assertEquals(memory, packet.relevantItems.single())
         assertEquals(previous, packet.relevantChapters.single())
@@ -23,6 +23,7 @@ class ContextAndQualityTest {
         assertTrue(packet.prompt.contains("旧码头"))
         assertEquals(anchor, packet.activeAnchor)
         assertTrue(packet.prompt.contains("本章严禁揭露"))
+        assertTrue(packet.prompt.contains("项目文风档案"))
     }
 
     @Test

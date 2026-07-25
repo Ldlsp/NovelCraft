@@ -49,6 +49,7 @@ object ContextEngine {
         appendLine("作品：${project.title}")
         appendLine("题材：${project.genre}")
         if (project.premise.isNotBlank()) appendLine("核心设定：${project.premise}")
+        if (project.styleGuide.isNotBlank()) appendLine("项目文风档案（必须遵守）：${project.styleGuide}")
         appendLine("当前章节：第${current.number}章 ${current.title}")
         if (current.outline.isNotBlank()) appendLine("本章计划：${current.outline}")
         if (current.beatSheet.isNotBlank()) appendLine("本章分镜（必须按顺序展开，不得跳过）：${current.beatSheet}")

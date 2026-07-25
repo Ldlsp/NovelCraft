@@ -44,6 +44,10 @@ class NovelRepository(private val database: NovelDatabase) {
         }
     }
 
+    suspend fun updateProjectStyle(project: NovelProject, styleGuide: String) {
+        database.projectDao().update(project.copy(styleGuide = styleGuide.trim(), updatedAt = System.currentTimeMillis()))
+    }
+
     suspend fun renameChapter(chapter: Chapter, title: String) {
         val timestamp = System.currentTimeMillis()
         database.chapterDao().update(chapter.copy(title = title.trim().ifBlank { "第${chapter.number}章" }, updatedAt = timestamp))

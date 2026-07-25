@@ -25,6 +25,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private var renameChapterJob: Job? = null
     private var savePlanJob: Job? = null
     private var saveBeatSheetJob: Job? = null
+    private var saveStyleJob: Job? = null
     private var generationJob: Job? = null
     private val pendingChapterContent = mutableMapOf<Long, String>()
 
@@ -182,6 +183,15 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         saveBeatSheetJob = viewModelScope.launch {
             delay(500)
             repository.updateChapterBeatSheet(chapter, beatSheet)
+        }
+    }
+
+    fun saveStyleGuide(styleGuide: String) {
+        val project = selectedProject.value ?: return
+        saveStyleJob?.cancel()
+        saveStyleJob = viewModelScope.launch {
+            delay(500)
+            repository.updateProjectStyle(project, styleGuide)
         }
     }
 
@@ -380,6 +390,34 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                         message.value = "本章分镜已保存，可继续编辑"
                     },
                     onFailure = { message.value = it.message ?: "生成分镜失败" },
+                )
+            } finally {
+                isGenerating.value = false
+            }
+        }
+    }
+
+    fun extractStyleGuideFromCurrentChapter() {
+        val project = selectedProject.value ?: return
+        val chapter = selectedChapter.value ?: return
+        val sample = pendingChapterContent[chapter.id] ?: chapter.content
+        if (sample.length < 200) {
+            message.value = "样章至少需要 200 字才能提取文风"
+            return
+        }
+        if (isGenerating.value) return
+        isGenerating.value = true
+        message.value = "正在提取项目文风..."
+        generationJob = viewModelScope.launch {
+            try {
+                val result = modelClient.extractStyleGuide(modelConfig.value, sample.take(8_000))
+                if (!isActive) return@launch
+                result.fold(
+                    onSuccess = { styleGuide ->
+                        repository.updateProjectStyle(project, styleGuide)
+                        message.value = "项目文风档案已保存，可继续调整"
+                    },
+                    onFailure = { message.value = it.message ?: "提取文风失败" },
                 )
             } finally {
                 isGenerating.value = false

@@ -23,6 +23,7 @@ data class NovelProject(
     val title: String,
     val genre: String,
     val premise: String,
+    val styleGuide: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 )
@@ -186,7 +187,7 @@ interface StoryEdgeDao {
 
 @Database(
     entities = [NovelProject::class, Chapter::class, StoryItem::class, StoryAnchor::class, StoryEdge::class],
-    version = 4,
+    version = 5,
     exportSchema = false,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -244,11 +245,16 @@ abstract class NovelDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE chapters ADD COLUMN beatSheet TEXT NOT NULL DEFAULT ''")
             }
         }
+        private val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE projects ADD COLUMN styleGuide TEXT NOT NULL DEFAULT ''")
+            }
+        }
 
         fun create(context: Context): NovelDatabase = Room.databaseBuilder(
             context.applicationContext,
             NovelDatabase::class.java,
             "novelcraft.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5).build()
     }
 }

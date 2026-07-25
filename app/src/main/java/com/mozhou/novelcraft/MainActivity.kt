@@ -200,6 +200,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onAddChapter = viewModel::addChapter,
                                 onSaveChapterPlan = viewModel::saveChapterPlan,
                                 onSaveBeatSheet = viewModel::saveBeatSheet,
+                                onSaveStyleGuide = viewModel::saveStyleGuide,
                                 onAddStoryItem = viewModel::addStoryItem,
                                 onUpdateStoryItem = viewModel::updateStoryItem,
                                 onAddAnchor = viewModel::addAnchor,
@@ -208,6 +209,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onGenerate = viewModel::generateContinuation,
                                 onGeneratePlan = viewModel::generateChapterPlan,
                                 onGenerateBeatSheet = viewModel::generateBeatSheet,
+                                onExtractStyleGuide = viewModel::extractStyleGuideFromCurrentChapter,
                                 onCancelGeneration = viewModel::cancelGeneration,
                                 onGenerateRepairPlan = viewModel::generateRepairPlan,
                             )
@@ -386,6 +388,7 @@ private fun WorkspaceScreen(
     onAddChapter: () -> Unit,
     onSaveChapterPlan: (String, Int) -> Unit,
     onSaveBeatSheet: (String) -> Unit,
+    onSaveStyleGuide: (String) -> Unit,
     onAddStoryItem: (String, String, String, String) -> Unit,
     onUpdateStoryItem: (StoryItem, String, String, String, String) -> Unit,
     onAddAnchor: (Int, Int, String, String, String, String, String) -> Unit,
@@ -394,6 +397,7 @@ private fun WorkspaceScreen(
     onGenerate: () -> Unit,
     onGeneratePlan: () -> Unit,
     onGenerateBeatSheet: () -> Unit,
+    onExtractStyleGuide: () -> Unit,
     onCancelGeneration: () -> Unit,
     onGenerateRepairPlan: () -> Unit,
 ) {
@@ -409,7 +413,7 @@ private fun WorkspaceScreen(
                 chapters, selectedChapter, contextPacket, config, isGenerating,
                 onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate, onCancelGeneration,
             )
-            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onSaveBeatSheet, onGeneratePlan, onGenerateBeatSheet, onCancelGeneration, onAddAnchor)
+            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor)
             WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, isGenerating, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory)
             WorkspaceTab.REVIEW -> ReviewTab(qualityIssues, repairPlan, config, isGenerating, onGenerateRepairPlan, onCancelGeneration)
         }
@@ -539,8 +543,10 @@ private fun OutlineTab(
     isGenerating: Boolean,
     onSavePlan: (String, Int) -> Unit,
     onSaveBeatSheet: (String) -> Unit,
+    onSaveStyleGuide: (String) -> Unit,
     onGeneratePlan: () -> Unit,
     onGenerateBeatSheet: () -> Unit,
+    onExtractStyleGuide: () -> Unit,
     onCancel: () -> Unit,
     onAddAnchor: (Int, Int, String, String, String, String, String) -> Unit,
 ) {
@@ -551,6 +557,7 @@ private fun OutlineTab(
             Text("章节大纲", style = MaterialTheme.typography.headlineSmall)
             if (project.premise.isNotBlank()) Text(project.premise, color = Color.Gray)
         }
+        item { StyleGuideEditor(project.styleGuide, config, isGenerating, onSaveStyleGuide, onExtractStyleGuide, onCancel) }
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                 Text("大纲锚点", style = MaterialTheme.typography.titleMedium)
@@ -638,6 +645,38 @@ private fun AnchorDialog(
         confirmButton = { Button(onClick = { onSave(start.toIntOrNull() ?: 1, end.toIntOrNull() ?: 1, title, conflict, allowed, forbidden, tension) }) { Text("保存") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
+}
+
+@Composable
+private fun StyleGuideEditor(
+    initialGuide: String,
+    config: ModelConfig,
+    isGenerating: Boolean,
+    onSave: (String) -> Unit,
+    onExtract: () -> Unit,
+    onCancel: () -> Unit,
+) {
+    var guide by remember(initialGuide) { mutableStateOf(initialGuide) }
+    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFDF8))) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("项目文风档案", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(
+                value = guide,
+                onValueChange = { guide = it; onSave(it) },
+                label = { Text("叙事视角、节奏、对话、禁用表达") },
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedButton(
+                onClick = if (isGenerating) onCancel else onExtract,
+                enabled = isGenerating || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
+            ) {
+                Icon(if (isGenerating) Icons.Outlined.Close else Icons.Outlined.Lightbulb, null)
+                Spacer(Modifier.width(6.dp))
+                Text(if (isGenerating) "取消生成" else "从当前样章提取文风")
+            }
+        }
+    }
 }
 
 @Composable

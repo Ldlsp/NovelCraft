@@ -108,6 +108,13 @@ class OpenAiCompatibleClient {
         systemInstruction = "你是中文小说责编。根据给出的章节和已发现的门禁问题，输出最短修复计划：按优先级列出具体要改的段落、修改目标和一个可直接采用的写法方向。不要重写全文，不要输出正文以外的空泛评价，不要建议提前揭露禁区。",
     )
 
+    suspend fun extractStyleGuide(config: ModelConfig, sample: String): Result<String> = chat(
+        config = config,
+        context = sample,
+        temperature = 0.2,
+        systemInstruction = "你是中文网文风格编辑。仅根据给出的样章，提取一个可执行的项目文风档案：叙事视角、时态、句长和节奏、对话比例、描写偏好、禁用表达、章末钩子习惯。用紧凑中文分点，不评价原文，不仿照在世作者，不输出小说正文。",
+    )
+
     private suspend fun chat(
         config: ModelConfig,
         context: String,
