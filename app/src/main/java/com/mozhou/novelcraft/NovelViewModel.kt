@@ -22,6 +22,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private val modelClient = OpenAiCompatibleClient()
     private var saveChapterJob: Job? = null
     private var renameChapterJob: Job? = null
+    private var savePlanJob: Job? = null
 
     val projects = repository.projects().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val selectedProjectId = MutableStateFlow<Long?>(null)
@@ -119,15 +120,55 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addStoryItem(kind: String, name: String, detail: String) {
+    fun saveChapterPlan(outline: String, targetWordCount: Int) {
+        val chapter = selectedChapter.value ?: return
+        savePlanJob?.cancel()
+        savePlanJob = viewModelScope.launch {
+            delay(500)
+            repository.updateChapterPlan(chapter, outline, targetWordCount)
+        }
+    }
+
+    fun addStoryItem(kind: String, name: String, detail: String, status: String) {
         val projectId = selectedProjectId.value ?: return
         if (name.isBlank()) {
             message.value = "请填写资料名称"
             return
         }
         viewModelScope.launch {
-            repository.addStoryItem(projectId, kind, name, detail)
+            repository.addStoryItem(projectId, kind, name, detail, status)
             message.value = "已保存" + kind
+        }
+    }
+
+    fun updateStoryItem(item: StoryItem, kind: String, name: String, detail: String, status: String) {
+        if (name.isBlank()) {
+            message.value = "请填写资料名称"
+            return
+        }
+        viewModelScope.launch {
+            repository.updateStoryItem(item, kind, name, detail, status)
+            message.value = "已更新${item.name}"
+        }
+    }
+
+    fun generateChapterPlan() {
+        val project = selectedProject.value ?: return
+        val chapter = selectedChapter.value ?: return
+        if (isGenerating.value) return
+        isGenerating.value = true
+        message.value = "正在根据本地记忆生成本章计划..."
+        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value).prompt +
+            "\n请为当前章节生成大纲，覆盖冲突、转折和结尾钩子。"
+        viewModelScope.launch {
+            modelClient.generateChapterPlan(modelConfig.value, context).fold(
+                onSuccess = { outline ->
+                    repository.updateChapterPlan(chapter, outline, chapter.targetWordCount)
+                    message.value = "本章计划已保存，可继续手动调整"
+                },
+                onFailure = { message.value = it.message ?: "生成大纲失败" },
+            )
+            isGenerating.value = false
         }
     }
 
@@ -157,7 +198,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             modelClient.continueWriting(modelConfig.value, writingContext).fold(
                 onSuccess = { generated ->
-                    repository.updateChapter(chapter, chapter.content.trimEnd() + "\\n\\n" + generated)
+                    repository.updateChapter(chapter, chapter.content.trimEnd() + "\n\n" + generated)
                     message.value = "已续写并保存到本机"
                 },
                 onFailure = { message.value = it.message ?: "续写失败" },

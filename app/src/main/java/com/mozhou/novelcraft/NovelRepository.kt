@@ -48,6 +48,14 @@ class NovelRepository(private val database: NovelDatabase) {
         database.projectDao().touch(chapter.projectId, timestamp)
     }
 
+    suspend fun updateChapterPlan(chapter: Chapter, outline: String, targetWordCount: Int) {
+        val timestamp = System.currentTimeMillis()
+        database.chapterDao().update(
+            chapter.copy(outline = outline.trim(), targetWordCount = targetWordCount.coerceAtLeast(0), updatedAt = timestamp),
+        )
+        database.projectDao().touch(chapter.projectId, timestamp)
+    }
+
     suspend fun addChapter(projectId: Long): Long {
         val number = (database.chapterDao().maxNumber(projectId) ?: 0) + 1
         val timestamp = System.currentTimeMillis()
@@ -56,9 +64,13 @@ class NovelRepository(private val database: NovelDatabase) {
         return id
     }
 
-    suspend fun addStoryItem(projectId: Long, kind: String, name: String, detail: String) {
+    suspend fun addStoryItem(projectId: Long, kind: String, name: String, detail: String, status: String) {
         database.storyItemDao().insert(
-            StoryItem(projectId = projectId, kind = kind, name = name, detail = detail),
+            StoryItem(projectId = projectId, kind = kind, name = name, detail = detail, status = status),
         )
+    }
+
+    suspend fun updateStoryItem(item: StoryItem, kind: String, name: String, detail: String, status: String) {
+        database.storyItemDao().update(item.copy(kind = kind, name = name, detail = detail, status = status, updatedAt = System.currentTimeMillis()))
     }
 }

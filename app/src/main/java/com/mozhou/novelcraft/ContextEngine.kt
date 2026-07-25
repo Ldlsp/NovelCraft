@@ -22,6 +22,7 @@ object ContextEngine {
         val query = listOf(project.title, project.premise, current.title, current.content.takeLast(1_600)).joinToString("\n")
         val queryTerms = terms(query)
         val relevantItems = storyItems
+            .filter { it.status != StoryItemStatus.RESOLVED }
             .map { it to score(query, queryTerms, it.name + "\n" + it.detail) }
             .filter { (_, score) -> score > 0 }
             .sortedByDescending { it.second }

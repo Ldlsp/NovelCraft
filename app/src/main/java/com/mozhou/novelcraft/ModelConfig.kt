@@ -62,16 +62,35 @@ class OpenAiCompatibleClient {
         }
     }
 
-    suspend fun continueWriting(config: ModelConfig, context: String): Result<String> = withContext(Dispatchers.IO) {
+    suspend fun continueWriting(config: ModelConfig, context: String): Result<String> = chat(
+        config = config,
+        context = context,
+        temperature = 0.8,
+        systemInstruction = "你是中文网文写作助手。只输出可直接接在正文后的小说正文，不输出标题、说明、Markdown 或分析。不得提前揭露尚未解决的核心谜底。",
+    )
+
+    suspend fun generateChapterPlan(config: ModelConfig, context: String): Result<String> = chat(
+        config = config,
+        context = context,
+        temperature = 0.5,
+        systemInstruction = "你是中文网文策划编辑。根据作者提供的已写内容和本地设定，只输出本章可执行大纲：目标、冲突升级、关键转折、结尾钩子。使用简短中文分点，不要写正文，不要暴露保密设定。",
+    )
+
+    private suspend fun chat(
+        config: ModelConfig,
+        context: String,
+        temperature: Double,
+        systemInstruction: String,
+    ): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             require(config.baseUrl.startsWith("https://")) { "Base URL 必须使用 HTTPS" }
             require(config.apiKey.isNotBlank()) { "请先填写 API Key" }
             require(config.model.isNotBlank()) { "请先填写模型名称" }
             val body = JSONObject().apply {
                 put("model", config.model)
-                put("temperature", 0.8)
+                put("temperature", temperature)
                 put("messages", org.json.JSONArray().apply {
-                    put(JSONObject().put("role", "system").put("content", "你是中文网文写作助手。只输出可直接接在正文后的小说正文，不输出标题、说明、Markdown 或分析。不得提前揭露尚未解决的核心谜底。"))
+                    put(JSONObject().put("role", "system").put("content", systemInstruction))
                     put(JSONObject().put("role", "user").put("content", context))
                 })
             }.toString()
@@ -93,4 +112,3 @@ class OpenAiCompatibleClient {
         }
     }
 }
-

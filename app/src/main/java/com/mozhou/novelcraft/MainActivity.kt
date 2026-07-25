@@ -180,8 +180,11 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onSaveChapter = viewModel::saveChapter,
                                 onRenameChapter = viewModel::renameChapter,
                                 onAddChapter = viewModel::addChapter,
+                                onSaveChapterPlan = viewModel::saveChapterPlan,
                                 onAddStoryItem = viewModel::addStoryItem,
+                                onUpdateStoryItem = viewModel::updateStoryItem,
                                 onGenerate = viewModel::generateContinuation,
+                                onGeneratePlan = viewModel::generateChapterPlan,
                             )
                         }
                     }
@@ -347,8 +350,11 @@ private fun WorkspaceScreen(
     onSaveChapter: (String) -> Unit,
     onRenameChapter: (String) -> Unit,
     onAddChapter: () -> Unit,
-    onAddStoryItem: (String, String, String) -> Unit,
+    onSaveChapterPlan: (String, Int) -> Unit,
+    onAddStoryItem: (String, String, String, String) -> Unit,
+    onUpdateStoryItem: (StoryItem, String, String, String, String) -> Unit,
     onGenerate: () -> Unit,
+    onGeneratePlan: () -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
@@ -362,8 +368,8 @@ private fun WorkspaceScreen(
                 chapters, selectedChapter, contextPacket, config, isGenerating,
                 onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate,
             )
-            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters)
-            WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, onAddStoryItem)
+            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, config, isGenerating, onSaveChapterPlan, onGeneratePlan)
+            WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, onAddStoryItem, onUpdateStoryItem)
             WorkspaceTab.REVIEW -> ReviewTab(qualityIssues)
         }
     }
@@ -474,12 +480,23 @@ private fun ContextSummary(packet: ContextPacket) {
 }
 
 @Composable
-private fun OutlineTab(project: NovelProject, chapters: List<Chapter>) {
+private fun OutlineTab(
+    project: NovelProject,
+    chapters: List<Chapter>,
+    selectedChapter: Chapter?,
+    config: ModelConfig,
+    isGenerating: Boolean,
+    onSavePlan: (String, Int) -> Unit,
+    onGeneratePlan: () -> Unit,
+) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text(project.genre + " · " + project.title, color = Red, style = MaterialTheme.typography.labelMedium)
             Text("章节大纲", style = MaterialTheme.typography.headlineSmall)
             if (project.premise.isNotBlank()) Text(project.premise, color = Color.Gray)
+        }
+        selectedChapter?.let { chapter ->
+            item { ChapterPlanEditor(chapter, config, isGenerating, onSavePlan, onGeneratePlan) }
         }
         items(chapters, key = { it.id }) { chapter ->
             Card {
@@ -488,7 +505,11 @@ private fun OutlineTab(project: NovelProject, chapters: List<Chapter>) {
                     Spacer(Modifier.width(12.dp))
                     Column {
                         Text(chapter.title, style = MaterialTheme.typography.titleSmall)
-                        Text(chapter.content.take(70).ifBlank { "待写" }, color = Color.Gray, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                        Text(chapter.outline.ifBlank { chapter.content.take(70).ifBlank { "待写" } }, color = Color.Gray, maxLines = 2, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
+                        if (chapter.targetWordCount > 0) {
+                            val current = chapter.content.count { !it.isWhitespace() }
+                            Text("$current / ${chapter.targetWordCount} 字", color = Teal, style = MaterialTheme.typography.labelSmall)
+                        }
                     }
                 }
             }
@@ -497,8 +518,53 @@ private fun OutlineTab(project: NovelProject, chapters: List<Chapter>) {
 }
 
 @Composable
-private fun ResourcesTab(items: List<StoryItem>, onAdd: (String, String, String) -> Unit) {
+private fun ChapterPlanEditor(
+    chapter: Chapter,
+    config: ModelConfig,
+    isGenerating: Boolean,
+    onSave: (String, Int) -> Unit,
+    onGeneratePlan: () -> Unit,
+) {
+    var outline by remember(chapter.id, chapter.outline) { mutableStateOf(chapter.outline) }
+    var target by remember(chapter.id, chapter.targetWordCount) { mutableStateOf(chapter.targetWordCount.takeIf { it > 0 }?.toString().orEmpty()) }
+    Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFFDF8))) {
+        Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("第${chapter.number}章计划", style = MaterialTheme.typography.titleMedium)
+            OutlinedTextField(
+                value = outline,
+                onValueChange = { outline = it; onSave(it, target.toIntOrNull() ?: 0) },
+                label = { Text("本章冲突、转折与结尾钩子") },
+                minLines = 3,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = target,
+                onValueChange = { target = it.filter(Char::isDigit); onSave(outline, target.toIntOrNull() ?: 0) },
+                label = { Text("目标字数，可留空") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedButton(
+                onClick = onGeneratePlan,
+                enabled = !isGenerating && config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
+            ) {
+                Icon(Icons.Outlined.Lightbulb, null)
+                Spacer(Modifier.width(6.dp))
+                Text(if (isGenerating) "生成中" else "AI 生成本章计划")
+            }
+        }
+    }
+}
+
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun ResourcesTab(
+    items: List<StoryItem>,
+    onAdd: (String, String, String, String) -> Unit,
+    onUpdate: (StoryItem, String, String, String, String) -> Unit,
+) {
     var dialogVisible by rememberSaveable { mutableStateOf(false) }
+    var editItem by remember { mutableStateOf<StoryItem?>(null) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -522,12 +588,12 @@ private fun ResourcesTab(items: List<StoryItem>, onAdd: (String, String, String)
             }
         } else {
             items(items, key = { it.id }) { item ->
-                Card {
+                Card(onClick = { editItem = item }) {
                     Row(Modifier.fillMaxWidth().padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                         Icon(if (item.kind == "人物") Icons.Outlined.People else Icons.Outlined.Lightbulb, null, tint = Teal)
                         Spacer(Modifier.width(12.dp))
                         Column {
-                            Text(item.kind + " · " + item.name, style = MaterialTheme.typography.titleSmall)
+                            Text(item.kind + " · " + item.name + " · " + item.status, style = MaterialTheme.typography.titleSmall)
                             Text(item.detail, color = Color.Gray, style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -536,10 +602,20 @@ private fun ResourcesTab(items: List<StoryItem>, onAdd: (String, String, String)
         }
     }
     if (dialogVisible) {
-        AddStoryItemDialog(onDismiss = { dialogVisible = false }, onAdd = { kind, name, detail ->
-            onAdd(kind, name, detail)
+        StoryItemDialog(onDismiss = { dialogVisible = false }, onSave = { kind, name, detail, status ->
+            onAdd(kind, name, detail, status)
             dialogVisible = false
         })
+    }
+    editItem?.let { item ->
+        StoryItemDialog(
+            item = item,
+            onDismiss = { editItem = null },
+            onSave = { kind, name, detail, status ->
+                onUpdate(item, kind, name, detail, status)
+                editItem = null
+            },
+        )
     }
 }
 
@@ -642,21 +718,36 @@ private fun CreateProjectDialog(onDismiss: () -> Unit, onCreate: (String, String
 }
 
 @Composable
-private fun AddStoryItemDialog(onDismiss: () -> Unit, onAdd: (String, String, String) -> Unit) {
-    var kind by remember { mutableStateOf("人物") }
-    var name by remember { mutableStateOf("") }
-    var detail by remember { mutableStateOf("") }
+private fun StoryItemDialog(
+    item: StoryItem? = null,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String, String) -> Unit,
+) {
+    var kind by remember(item) { mutableStateOf(item?.kind ?: "人物") }
+    var name by remember(item) { mutableStateOf(item?.name ?: "") }
+    var detail by remember(item) { mutableStateOf(item?.detail ?: "") }
+    var status by remember(item) { mutableStateOf(item?.status ?: StoryItemStatus.ACTIVE) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("添加资料") },
+        title = { Text(if (item == null) "添加资料" else "编辑资料") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(value = kind, onValueChange = { kind = it }, label = { Text("类型，例如人物/伏笔/时间线/禁区") })
                 OutlinedTextField(value = name, onValueChange = { name = it }, label = { Text("名称") })
                 OutlinedTextField(value = detail, onValueChange = { detail = it }, label = { Text("状态或说明") }, minLines = 2)
+                Text("资料状态", style = MaterialTheme.typography.labelMedium)
+                Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    listOf(StoryItemStatus.ACTIVE, StoryItemStatus.RESOLVED, StoryItemStatus.SECRET).forEach { option ->
+                        if (status == option) {
+                            Button(onClick = { status = option }) { Text(option) }
+                        } else {
+                            TextButton(onClick = { status = option }) { Text(option) }
+                        }
+                    }
+                }
             }
         },
-        confirmButton = { Button(onClick = { onAdd(kind, name, detail) }) { Text("保存") } },
+        confirmButton = { Button(onClick = { onSave(kind, name, detail, status) }) { Text("保存") } },
         dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } },
     )
 }

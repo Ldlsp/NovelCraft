@@ -13,6 +13,8 @@ import androidx.room.Query
 import androidx.room.Room
 import androidx.room.RoomDatabase
 import androidx.room.Update
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Entity(tableName = "projects")
@@ -41,6 +43,8 @@ data class Chapter(
     val number: Int,
     val title: String,
     val content: String = "",
+    val outline: String = "",
+    val targetWordCount: Int = 0,
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
@@ -60,8 +64,15 @@ data class StoryItem(
     val kind: String,
     val name: String,
     val detail: String,
+    val status: String = StoryItemStatus.ACTIVE,
     val updatedAt: Long = System.currentTimeMillis(),
 )
+
+object StoryItemStatus {
+    const val ACTIVE = "活跃"
+    const val RESOLVED = "已回收"
+    const val SECRET = "保密"
+}
 
 @Dao
 interface ProjectDao {
@@ -106,11 +117,14 @@ interface StoryItemDao {
 
     @Insert
     suspend fun insert(item: StoryItem): Long
+
+    @Update
+    suspend fun update(item: StoryItem)
 }
 
 @Database(
     entities = [NovelProject::class, Chapter::class, StoryItem::class],
-    version = 1,
+    version = 2,
     exportSchema = false,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -119,10 +133,18 @@ abstract class NovelDatabase : RoomDatabase() {
     abstract fun storyItemDao(): StoryItemDao
 
     companion object {
+        private val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE chapters ADD COLUMN outline TEXT NOT NULL DEFAULT ''")
+                db.execSQL("ALTER TABLE chapters ADD COLUMN targetWordCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE story_items ADD COLUMN status TEXT NOT NULL DEFAULT '活跃'")
+            }
+        }
+
         fun create(context: Context): NovelDatabase = Room.databaseBuilder(
             context.applicationContext,
             NovelDatabase::class.java,
             "novelcraft.db",
-        ).build()
+        ).addMigrations(MIGRATION_1_2).build()
     }
 }
