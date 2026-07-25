@@ -142,7 +142,13 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                     )
                     NavigationBarItem(
                         selected = destination == MainDestination.WORKSPACE,
-                        onClick = { if (project != null) destination = MainDestination.WORKSPACE },
+                        onClick = {
+                            if (project != null) {
+                                destination = MainDestination.WORKSPACE
+                            } else {
+                                createProjectVisible = true
+                            }
+                        },
                         icon = { Icon(Icons.Outlined.MenuBook, null) },
                         label = { Text("创作") },
                     )
