@@ -67,6 +67,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     val modelConfig = MutableStateFlow(modelPreferences.load())
     val message = MutableStateFlow<String?>(null)
     val isGenerating = MutableStateFlow(false)
+    val repairPlan = MutableStateFlow<String?>(null)
 
     fun selectProject(projectId: Long) {
         selectedProjectId.value = projectId
@@ -300,6 +301,35 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                         }
                     },
                     onFailure = { message.value = it.message ?: "提取记忆失败" },
+                )
+            } finally {
+                isGenerating.value = false
+            }
+        }
+    }
+
+    fun generateRepairPlan() {
+        val project = selectedProject.value ?: return
+        val chapter = selectedChapter.value ?: return
+        if (isGenerating.value) return
+        val issues = QualityGate.inspect(chapter, storyItems.value, anchors.value)
+        isGenerating.value = true
+        message.value = "正在生成最短修复计划..."
+        val context = buildString {
+            append(ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value).prompt)
+            appendLine("\n门禁问题：")
+            issues.forEach { appendLine("- ${it.title}：${it.detail}") }
+        }
+        generationJob = viewModelScope.launch {
+            try {
+                val result = modelClient.generateRepairPlan(modelConfig.value, context)
+                if (!isActive) return@launch
+                result.fold(
+                    onSuccess = { plan ->
+                        repairPlan.value = plan
+                        message.value = "修复计划已生成，正文未自动修改"
+                    },
+                    onFailure = { message.value = it.message ?: "生成修复计划失败" },
                 )
             } finally {
                 isGenerating.value = false

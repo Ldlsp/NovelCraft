@@ -101,6 +101,13 @@ class OpenAiCompatibleClient {
 没有可靠信息时返回空数组。每类最多15条，不要把普通路人、泛称或推测当实体。""",
     )
 
+    suspend fun generateRepairPlan(config: ModelConfig, context: String): Result<String> = chat(
+        config = config,
+        context = context,
+        temperature = 0.3,
+        systemInstruction = "你是中文小说责编。根据给出的章节和已发现的门禁问题，输出最短修复计划：按优先级列出具体要改的段落、修改目标和一个可直接采用的写法方向。不要重写全文，不要输出正文以外的空泛评价，不要建议提前揭露禁区。",
+    )
+
     private suspend fun chat(
         config: ModelConfig,
         context: String,

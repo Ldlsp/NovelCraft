@@ -100,6 +100,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
     val edges by viewModel.edges.collectAsStateWithLifecycle()
     val contextPacket by viewModel.contextPacket.collectAsStateWithLifecycle()
     val qualityIssues by viewModel.qualityIssues.collectAsStateWithLifecycle()
+    val repairPlan by viewModel.repairPlan.collectAsStateWithLifecycle()
     val modelConfig by viewModel.modelConfig.collectAsStateWithLifecycle()
     val message by viewModel.message.collectAsStateWithLifecycle()
     var destination by rememberSaveable { mutableStateOf(MainDestination.SHELF) }
@@ -190,6 +191,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 edges = edges,
                                 contextPacket = contextPacket,
                                 qualityIssues = qualityIssues,
+                                repairPlan = repairPlan,
                                 config = modelConfig,
                                 isGenerating = viewModel.isGenerating.collectAsStateWithLifecycle().value,
                                 onSelectChapter = viewModel::selectChapter,
@@ -207,6 +209,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onGeneratePlan = viewModel::generateChapterPlan,
                                 onGenerateBeatSheet = viewModel::generateBeatSheet,
                                 onCancelGeneration = viewModel::cancelGeneration,
+                                onGenerateRepairPlan = viewModel::generateRepairPlan,
                             )
                         }
                     }
@@ -374,6 +377,7 @@ private fun WorkspaceScreen(
     edges: List<StoryEdge>,
     contextPacket: ContextPacket,
     qualityIssues: List<QualityIssue>,
+    repairPlan: String?,
     config: ModelConfig,
     isGenerating: Boolean,
     onSelectChapter: (Long) -> Unit,
@@ -391,6 +395,7 @@ private fun WorkspaceScreen(
     onGeneratePlan: () -> Unit,
     onGenerateBeatSheet: () -> Unit,
     onCancelGeneration: () -> Unit,
+    onGenerateRepairPlan: () -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
@@ -406,7 +411,7 @@ private fun WorkspaceScreen(
             )
             WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, isGenerating, onSaveChapterPlan, onSaveBeatSheet, onGeneratePlan, onGenerateBeatSheet, onCancelGeneration, onAddAnchor)
             WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, isGenerating, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory)
-            WorkspaceTab.REVIEW -> ReviewTab(qualityIssues)
+            WorkspaceTab.REVIEW -> ReviewTab(qualityIssues, repairPlan, config, isGenerating, onGenerateRepairPlan, onCancelGeneration)
         }
     }
 }
@@ -826,7 +831,14 @@ private fun StoryEdgeDialog(
 }
 
 @Composable
-private fun ReviewTab(issues: List<QualityIssue>) {
+private fun ReviewTab(
+    issues: List<QualityIssue>,
+    repairPlan: String?,
+    config: ModelConfig,
+    isGenerating: Boolean,
+    onGenerateRepairPlan: () -> Unit,
+    onCancel: () -> Unit,
+) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Text("发布前检查", style = MaterialTheme.typography.headlineSmall)
@@ -834,6 +846,26 @@ private fun ReviewTab(issues: List<QualityIssue>) {
         }
         items(issues) { issue ->
             AuditRow(issue.severity == QualitySeverity.INFO, issue.title, issue.detail)
+        }
+        item {
+            OutlinedButton(
+                onClick = if (isGenerating) onCancel else onGenerateRepairPlan,
+                enabled = isGenerating || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
+            ) {
+                Icon(if (isGenerating) Icons.Outlined.Close else Icons.Outlined.Lightbulb, null)
+                Spacer(Modifier.width(6.dp))
+                Text(if (isGenerating) "取消生成" else "生成修复计划")
+            }
+        }
+        repairPlan?.let { plan ->
+            item {
+                Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFFFF4DA))) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text("最短修复计划", style = MaterialTheme.typography.titleSmall)
+                        Text(plan, color = Ink, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
         }
         item {
             Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE5F0ED))) {
