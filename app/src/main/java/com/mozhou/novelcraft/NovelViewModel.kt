@@ -14,6 +14,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 @OptIn(ExperimentalCoroutinesApi::class)
 class NovelViewModel(application: Application) : AndroidViewModel(application) {
@@ -23,6 +24,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private var saveChapterJob: Job? = null
     private var renameChapterJob: Job? = null
     private var savePlanJob: Job? = null
+    private var generationJob: Job? = null
 
     val projects = repository.projects().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val selectedProjectId = MutableStateFlow<Long?>(null)
@@ -190,15 +192,20 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         message.value = "正在根据本地记忆生成本章计划..."
         val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value).prompt +
             "\n请为当前章节生成大纲，覆盖冲突、转折和结尾钩子。"
-        viewModelScope.launch {
-            modelClient.generateChapterPlan(modelConfig.value, context).fold(
-                onSuccess = { outline ->
-                    repository.updateChapterPlan(chapter, outline, chapter.targetWordCount)
-                    message.value = "本章计划已保存，可继续手动调整"
-                },
-                onFailure = { message.value = it.message ?: "生成大纲失败" },
-            )
-            isGenerating.value = false
+        generationJob = viewModelScope.launch {
+            try {
+                val result = modelClient.generateChapterPlan(modelConfig.value, context)
+                if (!isActive) return@launch
+                result.fold(
+                    onSuccess = { outline ->
+                        repository.updateChapterPlan(chapter, outline, chapter.targetWordCount)
+                        message.value = "本章计划已保存，可继续手动调整"
+                    },
+                    onFailure = { message.value = it.message ?: "生成大纲失败" },
+                )
+            } finally {
+                isGenerating.value = false
+            }
         }
     }
 
@@ -225,16 +232,29 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         isGenerating.value = true
         message.value = "正在直接请求你的模型..."
         val writingContext = ContextEngine.build(project, chapter, chapters.value, storyItems.value).prompt
-        viewModelScope.launch {
-            modelClient.continueWriting(modelConfig.value, writingContext).fold(
-                onSuccess = { generated ->
-                    repository.updateChapter(chapter, chapter.content.trimEnd() + "\n\n" + generated)
-                    message.value = "已续写并保存到本机"
-                },
-                onFailure = { message.value = it.message ?: "续写失败" },
-            )
-            isGenerating.value = false
+        generationJob = viewModelScope.launch {
+            try {
+                val result = modelClient.continueWriting(modelConfig.value, writingContext)
+                if (!isActive) return@launch
+                result.fold(
+                    onSuccess = { generated ->
+                        repository.updateChapter(chapter, chapter.content.trimEnd() + "\n\n" + generated)
+                        message.value = "已续写并保存到本机"
+                    },
+                    onFailure = { message.value = it.message ?: "续写失败" },
+                )
+            } finally {
+                isGenerating.value = false
+            }
         }
+    }
+
+    fun cancelGeneration() {
+        if (!isGenerating.value) return
+        modelClient.cancelActiveRequest()
+        generationJob?.cancel()
+        isGenerating.value = false
+        message.value = "已取消模型请求，正文未改动"
     }
 
     fun clearMessage() {

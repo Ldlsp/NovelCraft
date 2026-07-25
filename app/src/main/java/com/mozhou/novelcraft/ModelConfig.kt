@@ -46,6 +46,12 @@ class ModelPreferences(context: Context) {
 }
 
 class OpenAiCompatibleClient {
+    @Volatile private var activeConnection: HttpURLConnection? = null
+
+    fun cancelActiveRequest() {
+        activeConnection?.disconnect()
+    }
+
     suspend fun test(config: ModelConfig): Result<String> = withContext(Dispatchers.IO) {
         runCatching {
             require(config.baseUrl.startsWith("https://")) { "Base URL 必须使用 HTTPS" }
@@ -95,20 +101,25 @@ class OpenAiCompatibleClient {
                 })
             }.toString()
             val connection = URL(config.baseUrl.trimEnd('/') + "/chat/completions").openConnection() as HttpURLConnection
-            connection.requestMethod = "POST"
-            connection.doOutput = true
-            connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
-            connection.setRequestProperty("Authorization", "Bearer " + config.apiKey)
-            connection.connectTimeout = 20_000
-            connection.readTimeout = 90_000
-            connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-            val status = connection.responseCode
-            val response = (if (status in 200..299) connection.inputStream else connection.errorStream)
-                ?.bufferedReader()?.use { it.readText() }.orEmpty()
-            connection.disconnect()
-            if (status !in 200..299) error("接口返回 HTTP " + status + ": " + response.take(180))
-            JSONObject(response).getJSONArray("choices").getJSONObject(0)
-                .getJSONObject("message").getString("content").trim()
+            activeConnection = connection
+            try {
+                connection.requestMethod = "POST"
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                connection.setRequestProperty("Authorization", "Bearer " + config.apiKey)
+                connection.connectTimeout = 20_000
+                connection.readTimeout = 90_000
+                connection.outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                val status = connection.responseCode
+                val response = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                    ?.bufferedReader()?.use { it.readText() }.orEmpty()
+                if (status !in 200..299) error("接口返回 HTTP " + status + ": " + response.take(180))
+                JSONObject(response).getJSONArray("choices").getJSONObject(0)
+                    .getJSONObject("message").getString("content").trim()
+            } finally {
+                if (activeConnection === connection) activeConnection = null
+                connection.disconnect()
+            }
         }
     }
 }

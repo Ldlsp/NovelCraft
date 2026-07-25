@@ -23,6 +23,7 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.AutoStories
 import androidx.compose.material.icons.outlined.Book
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.FileOpen
@@ -190,6 +191,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onUpdateStoryItem = viewModel::updateStoryItem,
                                 onGenerate = viewModel::generateContinuation,
                                 onGeneratePlan = viewModel::generateChapterPlan,
+                                onCancelGeneration = viewModel::cancelGeneration,
                             )
                         }
                     }
@@ -366,6 +368,7 @@ private fun WorkspaceScreen(
     onUpdateStoryItem: (StoryItem, String, String, String, String) -> Unit,
     onGenerate: () -> Unit,
     onGeneratePlan: () -> Unit,
+    onCancelGeneration: () -> Unit,
 ) {
     var selectedTab by rememberSaveable { mutableIntStateOf(0) }
     Column(Modifier.fillMaxSize()) {
@@ -377,9 +380,9 @@ private fun WorkspaceScreen(
         when (WorkspaceTab.entries[selectedTab]) {
             WorkspaceTab.WRITE -> WriteTab(
                 chapters, selectedChapter, contextPacket, config, isGenerating,
-                onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate,
+                onSelectChapter, onSaveChapter, onRenameChapter, onAddChapter, onGenerate, onCancelGeneration,
             )
-            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, config, isGenerating, onSaveChapterPlan, onGeneratePlan)
+            WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, config, isGenerating, onSaveChapterPlan, onGeneratePlan, onCancelGeneration)
             WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, onAddStoryItem, onUpdateStoryItem)
             WorkspaceTab.REVIEW -> ReviewTab(qualityIssues)
         }
@@ -399,6 +402,7 @@ private fun WriteTab(
     onRename: (String) -> Unit,
     onAddChapter: () -> Unit,
     onGenerate: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     if (chapter == null) {
         EmptyWorkspace()
@@ -426,13 +430,21 @@ private fun WriteTab(
         ContextSummary(contextPacket)
         Spacer(Modifier.height(10.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-            Button(
-                onClick = onGenerate,
-                enabled = !isGenerating && config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
-            ) {
-                Icon(Icons.Outlined.Lightbulb, null)
-                Spacer(Modifier.width(6.dp))
-                Text(if (isGenerating) "续写中" else "AI 续写")
+            if (isGenerating) {
+                Button(onClick = onCancel) {
+                    Icon(Icons.Outlined.Close, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("取消")
+                }
+            } else {
+                Button(
+                    onClick = onGenerate,
+                    enabled = config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
+                ) {
+                    Icon(Icons.Outlined.Lightbulb, null)
+                    Spacer(Modifier.width(6.dp))
+                    Text("AI 续写")
+                }
             }
             OutlinedButton(onClick = { onSave(draft) }) {
                 Icon(Icons.Outlined.Save, null)
@@ -499,6 +511,7 @@ private fun OutlineTab(
     isGenerating: Boolean,
     onSavePlan: (String, Int) -> Unit,
     onGeneratePlan: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
@@ -507,7 +520,7 @@ private fun OutlineTab(
             if (project.premise.isNotBlank()) Text(project.premise, color = Color.Gray)
         }
         selectedChapter?.let { chapter ->
-            item { ChapterPlanEditor(chapter, config, isGenerating, onSavePlan, onGeneratePlan) }
+            item { ChapterPlanEditor(chapter, config, isGenerating, onSavePlan, onGeneratePlan, onCancel) }
         }
         items(chapters, key = { it.id }) { chapter ->
             Card {
@@ -535,6 +548,7 @@ private fun ChapterPlanEditor(
     isGenerating: Boolean,
     onSave: (String, Int) -> Unit,
     onGeneratePlan: () -> Unit,
+    onCancel: () -> Unit,
 ) {
     var outline by remember(chapter.id, chapter.outline) { mutableStateOf(chapter.outline) }
     var target by remember(chapter.id, chapter.targetWordCount) { mutableStateOf(chapter.targetWordCount.takeIf { it > 0 }?.toString().orEmpty()) }
@@ -556,12 +570,12 @@ private fun ChapterPlanEditor(
                 modifier = Modifier.fillMaxWidth(),
             )
             OutlinedButton(
-                onClick = onGeneratePlan,
-                enabled = !isGenerating && config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
+                onClick = if (isGenerating) onCancel else onGeneratePlan,
+                enabled = isGenerating || (config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
             ) {
-                Icon(Icons.Outlined.Lightbulb, null)
+                Icon(if (isGenerating) Icons.Outlined.Close else Icons.Outlined.Lightbulb, null)
                 Spacer(Modifier.width(6.dp))
-                Text(if (isGenerating) "生成中" else "AI 生成本章计划")
+                Text(if (isGenerating) "取消生成" else "AI 生成本章计划")
             }
         }
     }
