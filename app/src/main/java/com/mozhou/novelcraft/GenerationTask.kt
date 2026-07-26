@@ -13,6 +13,7 @@ enum class GenerationTask(val label: String) {
     HUMANIZE("去 AI 味润色"),
     COVER("封面"),
     PROJECT_PROFILE("作品设定"),
+    LONG_FORM_BLUEPRINT("长篇路线图"),
 }
 
 class GenerationRequest {

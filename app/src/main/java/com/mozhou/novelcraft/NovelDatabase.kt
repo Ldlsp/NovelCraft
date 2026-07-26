@@ -29,6 +29,7 @@ data class NovelProject(
     val tags: String = "",
     val targetAudience: String = "",
     val protagonistName: String = "",
+    val longFormBlueprint: String = "",
     val coverPath: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
@@ -93,6 +94,23 @@ data class AutoWriteRun(
     val detail: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(
+    tableName = "chapter_story_mentions",
+    foreignKeys = [
+        ForeignKey(entity = NovelProject::class, parentColumns = ["id"], childColumns = ["projectId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = Chapter::class, parentColumns = ["id"], childColumns = ["chapterId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = StoryItem::class, parentColumns = ["id"], childColumns = ["storyItemId"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("projectId"), Index("chapterId"), Index("storyItemId")],
+)
+data class ChapterStoryMention(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val projectId: Long,
+    val chapterId: Long,
+    val storyItemId: Long,
+    val createdAt: Long = System.currentTimeMillis(),
 )
 
 object AutoWriteRunStatus {
@@ -278,6 +296,18 @@ interface StoryItemDao {
 }
 
 @Dao
+interface ChapterStoryMentionDao {
+    @Query("SELECT * FROM chapter_story_mentions WHERE projectId = :projectId")
+    fun observeByProject(projectId: Long): Flow<List<ChapterStoryMention>>
+
+    @Query("DELETE FROM chapter_story_mentions WHERE chapterId = :chapterId")
+    suspend fun deleteByChapter(chapterId: Long)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertAll(mentions: List<ChapterStoryMention>)
+}
+
+@Dao
 interface StoryAnchorDao {
     @Query("SELECT * FROM story_anchors WHERE projectId = :projectId ORDER BY startChapter ASC, endChapter ASC")
     fun observeByProject(projectId: Long): Flow<List<StoryAnchor>>
@@ -302,8 +332,8 @@ interface StoryEdgeDao {
 }
 
 @Database(
-    entities = [NovelProject::class, Chapter::class, ChapterRevision::class, AutoWriteRun::class, StoryItem::class, StoryAnchor::class, StoryEdge::class],
-    version = 12,
+    entities = [NovelProject::class, Chapter::class, ChapterRevision::class, AutoWriteRun::class, StoryItem::class, ChapterStoryMention::class, StoryAnchor::class, StoryEdge::class],
+    version = 14,
     exportSchema = false,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -312,6 +342,7 @@ abstract class NovelDatabase : RoomDatabase() {
     abstract fun chapterRevisionDao(): ChapterRevisionDao
     abstract fun autoWriteRunDao(): AutoWriteRunDao
     abstract fun storyItemDao(): StoryItemDao
+    abstract fun chapterStoryMentionDao(): ChapterStoryMentionDao
     abstract fun storyAnchorDao(): StoryAnchorDao
     abstract fun storyEdgeDao(): StoryEdgeDao
 
@@ -440,11 +471,35 @@ abstract class NovelDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_chapters_autoWriteRunId ON chapters(autoWriteRunId)")
             }
         }
+        private val MIGRATION_12_13 = object : Migration(12, 13) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS chapter_story_mentions (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        projectId INTEGER NOT NULL,
+                        chapterId INTEGER NOT NULL,
+                        storyItemId INTEGER NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        FOREIGN KEY(projectId) REFERENCES projects(id) ON DELETE CASCADE,
+                        FOREIGN KEY(chapterId) REFERENCES chapters(id) ON DELETE CASCADE,
+                        FOREIGN KEY(storyItemId) REFERENCES story_items(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_chapter_story_mentions_projectId ON chapter_story_mentions(projectId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_chapter_story_mentions_chapterId ON chapter_story_mentions(chapterId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_chapter_story_mentions_storyItemId ON chapter_story_mentions(storyItemId)")
+            }
+        }
+        private val MIGRATION_13_14 = object : Migration(13, 14) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE projects ADD COLUMN longFormBlueprint TEXT NOT NULL DEFAULT ''")
+            }
+        }
 
         fun create(context: Context): NovelDatabase = Room.databaseBuilder(
             context.applicationContext,
             NovelDatabase::class.java,
             "novelcraft.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).build()
     }
 }

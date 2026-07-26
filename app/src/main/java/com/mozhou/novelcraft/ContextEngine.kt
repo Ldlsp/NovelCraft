@@ -22,6 +22,7 @@ object ContextEngine {
         storyItems: List<StoryItem>,
         anchors: List<StoryAnchor> = emptyList(),
         edges: List<StoryEdge> = emptyList(),
+        mentions: List<ChapterStoryMention> = emptyList(),
     ): ContextPacket {
         val query = listOf(project.title, project.premise, current.title, current.content.takeLast(1_600)).joinToString("\n")
         val queryTerms = terms(query)
@@ -33,9 +34,16 @@ object ContextEngine {
             .take(8)
             .map { it.first }
 
+        val mentionChapterIds = mentions
+            .filter { it.storyItemId in relevantItems.map { item -> item.id }.toSet() }
+            .map { it.chapterId }
+            .toSet()
         val retrievedChapters = chapters
             .filter { it.id != current.id && it.content.isNotBlank() }
-            .map { it to score(query, queryTerms, it.title + "\n" + it.content.takeLast(900)) }
+            .map { chapter ->
+                val mentionBonus = if (chapter.id in mentionChapterIds) 40 else 0
+                chapter to score(query, queryTerms, chapter.title + "\n" + chapter.content.takeLast(900)) + mentionBonus
+            }
             .sortedWith(compareByDescending<Pair<Chapter, Int>> { it.second }.thenByDescending { it.first.number })
             .filter { it.second > 0 }
             .take(2)
@@ -59,6 +67,7 @@ object ContextEngine {
         appendLine("作品：${project.title}")
         appendLine("题材：${project.genre}")
         if (project.premise.isNotBlank()) appendLine("核心设定：${project.premise}")
+        if (project.longFormBlueprint.isNotBlank()) appendLine("长篇路线图（必须遵守阶段目标与未解问题）：${project.longFormBlueprint.take(4_000)}")
         if (project.styleGuide.isNotBlank()) appendLine("项目文风档案（必须遵守）：${project.styleGuide}")
         appendLine("当前章节：第${current.number}章 ${current.title}")
         if (current.outline.isNotBlank()) appendLine("本章计划：${current.outline}")
@@ -86,7 +95,7 @@ object ContextEngine {
             }
         }
         if (packet.relevantChapters.isNotEmpty()) {
-            appendLine("相关已写章节摘录：")
+            appendLine("相关已写章节摘录（实体引用优先）：")
             packet.relevantChapters.forEach {
                 appendLine("- 第${it.number}章 ${it.title}：${it.content.takeLast(500)}")
             }

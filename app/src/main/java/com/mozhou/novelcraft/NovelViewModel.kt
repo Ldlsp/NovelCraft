@@ -68,6 +68,10 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         if (id == null) flowOf(emptyList()) else repository.storyItems(id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val chapterMentions = selectedProjectId.flatMapLatest { id ->
+        if (id == null) flowOf(emptyList()) else repository.chapterMentions(id)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val anchors = selectedProjectId.flatMapLatest { id ->
         if (id == null) flowOf(emptyList()) else repository.anchors(id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -92,8 +96,8 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         WritingContextInput(project, chapter, allChapters, items, projectAnchors)
     }
 
-    val contextPacket = combine(writingContextInput, edges) { input, graphEdges ->
-        if (input.project == null || input.chapter == null) ContextPacket() else ContextEngine.build(input.project, input.chapter, input.chapters, input.items, input.anchors, graphEdges)
+    val contextPacket = combine(writingContextInput, edges, chapterMentions) { input, graphEdges, mentions ->
+        if (input.project == null || input.chapter == null) ContextPacket() else ContextEngine.build(input.project, input.chapter, input.chapters, input.items, input.anchors, graphEdges, mentions)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextPacket())
 
     val qualityIssues = combine(selectedChapter, storyItems, anchors) { chapter, items, projectAnchors ->
@@ -413,6 +417,40 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveLongFormBlueprint(blueprint: String) {
+        val project = selectedProject.value ?: return
+        viewModelScope.launch { repository.updateLongFormBlueprint(project, blueprint) }
+    }
+
+    fun generateLongFormBlueprint() {
+        val project = selectedProject.value ?: return
+        val request = beginGeneration(GenerationTask.LONG_FORM_BLUEPRINT) ?: return
+        message.value = "正在生成长篇路线图..."
+        val context = buildString {
+            appendLine("书名：${project.title}")
+            appendLine("题材：${project.genre}")
+            appendLine("核心设定：${project.premise}")
+            if (project.summary.isNotBlank()) appendLine("简介：${project.summary}")
+            if (project.tags.isNotBlank()) appendLine("标签：${project.tags}")
+            if (project.targetAudience.isNotBlank()) appendLine("读者：${project.targetAudience}")
+            if (project.protagonistName.isNotBlank()) appendLine("主角：${project.protagonistName}")
+            if (project.longFormBlueprint.isNotBlank()) appendLine("现有路线图：${project.longFormBlueprint}")
+        }
+        generationJobs[GenerationTask.LONG_FORM_BLUEPRINT] = viewModelScope.launch {
+            try {
+                modelClient.generateLongFormBlueprint(modelConfig.value, context, request).fold(
+                    onSuccess = { blueprint ->
+                        repository.updateLongFormBlueprint(project, blueprint)
+                        message.value = "长篇路线图已生成，可在作品页继续编辑"
+                    },
+                    onFailure = { message.value = it.message ?: "生成长篇路线图失败" },
+                )
+            } finally {
+                finishGeneration(GenerationTask.LONG_FORM_BLUEPRINT, request)
+            }
+        }
+    }
+
     fun addStoryItem(kind: String, name: String, detail: String, status: String) {
         val projectId = selectedProjectId.value ?: return
         if (name.isBlank()) {
@@ -471,6 +509,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
 
     private suspend fun applyMemoryExtraction(chapter: Chapter, extraction: MemoryExtraction): String {
         val knownByName = storyItems.value.associateBy { it.name }.toMutableMap()
+        val mentionedItemIds = mutableSetOf<Long>()
         var addedItems = 0
         extraction.items.distinctBy { it.name }.forEach { candidate ->
             val existing = knownByName[candidate.name]
@@ -488,18 +527,22 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
             } else if (candidate.detail.isNotBlank() && (existing.detail != candidate.detail || existing.status != candidate.status)) {
                 repository.updateStoryItem(existing, candidate.kind, candidate.name, candidate.detail, candidate.status)
             }
+            knownByName[candidate.name]?.let { mentionedItemIds += it.id }
         }
         val knownEdges = edges.value.map { Triple(it.sourceItemId, it.targetItemId, it.relation) }.toMutableSet()
         var addedEdges = 0
         extraction.edges.forEach { candidate ->
             val source = knownByName[candidate.sourceName] ?: return@forEach
             val target = knownByName[candidate.targetName] ?: return@forEach
+            mentionedItemIds += source.id
+            mentionedItemIds += target.id
             if (source.id != target.id && knownEdges.add(Triple(source.id, target.id, candidate.relation))) {
                 repository.addEdge(chapter.projectId, source.id, target.id, candidate.relation, candidate.description, chapter.number)
                 addedEdges += 1
             }
         }
-        return "记忆已更新：新增 $addedItems 条资料、$addedEdges 条关系"
+        repository.replaceChapterMentions(chapter, mentionedItemIds)
+        return "记忆已更新：新增 $addedItems 条资料、$addedEdges 条关系、${mentionedItemIds.size} 条章节引用"
     }
 
     private suspend fun runChapterLifecycle(chapter: Chapter, request: GenerationRequest): ChapterLifecycleResult {

@@ -13,6 +13,7 @@ class NovelRepository(private val database: NovelDatabase) {
     fun latestRevision(chapterId: Long): Flow<ChapterRevision?> = database.chapterRevisionDao().observeLatest(chapterId)
     fun resumableAutoWriteRun(projectId: Long): Flow<AutoWriteRun?> = database.autoWriteRunDao().observeResumable(projectId)
     fun storyItems(projectId: Long): Flow<List<StoryItem>> = database.storyItemDao().observeByProject(projectId)
+    fun chapterMentions(projectId: Long): Flow<List<ChapterStoryMention>> = database.chapterStoryMentionDao().observeByProject(projectId)
     fun anchors(projectId: Long): Flow<List<StoryAnchor>> = database.storyAnchorDao().observeByProject(projectId)
     fun edges(projectId: Long): Flow<List<StoryEdge>> = database.storyEdgeDao().observeByProject(projectId)
 
@@ -49,6 +50,10 @@ class NovelRepository(private val database: NovelDatabase) {
 
     suspend fun updateProjectStyle(project: NovelProject, styleGuide: String) {
         database.projectDao().update(project.copy(styleGuide = styleGuide.trim(), updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun updateLongFormBlueprint(project: NovelProject, blueprint: String) {
+        database.projectDao().update(project.copy(longFormBlueprint = blueprint.trim(), updatedAt = System.currentTimeMillis()))
     }
 
     suspend fun updateProjectProfile(
@@ -275,6 +280,15 @@ class NovelRepository(private val database: NovelDatabase) {
     suspend fun addStoryItem(projectId: Long, kind: String, name: String, detail: String, status: String): Long {
         return database.storyItemDao().insert(
             StoryItem(projectId = projectId, kind = kind, name = name, detail = detail, status = status),
+        )
+    }
+
+    suspend fun replaceChapterMentions(chapter: Chapter, itemIds: Collection<Long>) = database.withTransaction {
+        database.chapterStoryMentionDao().deleteByChapter(chapter.id)
+        database.chapterStoryMentionDao().insertAll(
+            itemIds.distinct().map { itemId ->
+                ChapterStoryMention(projectId = chapter.projectId, chapterId = chapter.id, storyItemId = itemId)
+            },
         )
     }
 

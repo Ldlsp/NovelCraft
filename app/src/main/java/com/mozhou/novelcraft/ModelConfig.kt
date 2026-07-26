@@ -165,6 +165,14 @@ class OpenAiCompatibleClient {
         request = request,
     )
 
+    suspend fun generateLongFormBlueprint(config: ModelConfig, context: String, request: GenerationRequest? = null): Result<String> = chat(
+        config = config,
+        context = context,
+        temperature = 0.55,
+        systemInstruction = "你是中文长篇网文总策划。基于作者提供的作品资料，输出可编辑的长篇路线图：总目标与终局条件、4-6个阶段（建议章节区间、阶段目标、核心冲突、爽点升级、必须保留的伏笔）、主角能力或关系变化，以及每阶段不得提前解决的问题。不要写正文，不要编造现实作品或平台信息；用紧凑中文分点输出。",
+        request = request,
+    )
+
     suspend fun generateCover(
         config: ModelConfig,
         prompt: String,

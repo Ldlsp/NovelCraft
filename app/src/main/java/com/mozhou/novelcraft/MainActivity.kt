@@ -255,6 +255,8 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onExport = { project?.let { exporter.launch("${it.title}.md") } },
                                 profileSuggestion = projectProfileSuggestion,
                                 onGenerateProjectProfile = viewModel::generateProjectProfile,
+                                onSaveLongFormBlueprint = viewModel::saveLongFormBlueprint,
+                                onGenerateLongFormBlueprint = viewModel::generateLongFormBlueprint,
                                 onSaveChapterPlan = viewModel::saveChapterPlan,
                                 onSaveBeatSheet = viewModel::saveBeatSheet,
                                 onSaveStyleGuide = viewModel::saveStyleGuide,
@@ -509,6 +511,8 @@ private fun WorkspaceScreen(
     onExport: () -> Unit,
     profileSuggestion: ProjectProfileSuggestion?,
     onGenerateProjectProfile: () -> Unit,
+    onSaveLongFormBlueprint: (String) -> Unit,
+    onGenerateLongFormBlueprint: () -> Unit,
     onSaveChapterPlan: (String, Int) -> Unit,
     onSaveBeatSheet: (String) -> Unit,
     onSaveStyleGuide: (String) -> Unit,
@@ -544,6 +548,7 @@ private fun WorkspaceScreen(
                 project = project,
                 isCoverGenerating = GenerationTask.COVER in activeTasks,
                 isProfileGenerating = GenerationTask.PROJECT_PROFILE in activeTasks,
+                isBlueprintGenerating = GenerationTask.LONG_FORM_BLUEPRINT in activeTasks,
                 hasImageConfig = config.imageBaseUrl.isNotBlank() && config.imageApiKey.isNotBlank() && config.imageModel.isNotBlank(),
                 hasTextConfig = config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank(),
                 profileSuggestion = profileSuggestion,
@@ -554,6 +559,9 @@ private fun WorkspaceScreen(
                 onCancelCover = { onCancelGeneration(GenerationTask.COVER) },
                 onGenerateProfile = onGenerateProjectProfile,
                 onCancelProfile = { onCancelGeneration(GenerationTask.PROJECT_PROFILE) },
+                onSaveBlueprint = onSaveLongFormBlueprint,
+                onGenerateBlueprint = onGenerateLongFormBlueprint,
+                onCancelBlueprint = { onCancelGeneration(GenerationTask.LONG_FORM_BLUEPRINT) },
                 onDeleteProject = onDeleteProject,
             )
             WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, activeTasks, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor, onReviseOutline, onResolveOutlineCascade)
@@ -601,6 +609,7 @@ private fun ProjectTab(
     project: NovelProject,
     isCoverGenerating: Boolean,
     isProfileGenerating: Boolean,
+    isBlueprintGenerating: Boolean,
     hasImageConfig: Boolean,
     hasTextConfig: Boolean,
     profileSuggestion: ProjectProfileSuggestion?,
@@ -611,6 +620,9 @@ private fun ProjectTab(
     onCancelCover: () -> Unit,
     onGenerateProfile: () -> Unit,
     onCancelProfile: () -> Unit,
+    onSaveBlueprint: (String) -> Unit,
+    onGenerateBlueprint: () -> Unit,
+    onCancelBlueprint: () -> Unit,
     onDeleteProject: () -> Unit,
 ) {
     var title by remember(project) { mutableStateOf(project.title) }
@@ -620,6 +632,7 @@ private fun ProjectTab(
     var tags by remember(project) { mutableStateOf(project.tags) }
     var audience by remember(project) { mutableStateOf(project.targetAudience) }
     var protagonist by remember(project) { mutableStateOf(project.protagonistName) }
+    var blueprint by remember(project) { mutableStateOf(project.longFormBlueprint) }
     var deleteVisible by rememberSaveable { mutableStateOf(false) }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(onUploadCover) }
     LaunchedEffect(profileSuggestion) {
@@ -692,6 +705,29 @@ private fun ProjectTab(
                         Button(onClick = { onSaveProfile(title, genre, premise, summary, tags, audience, protagonist) }, modifier = Modifier.weight(1f)) { Text("确认保存") }
                     }
                     ActionHint("AI 补全会先填入表单，确认保存后才会修改作品；简介、标签和主角名会自动用于封面与后续写作上下文。")
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F3FF))) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("长篇路线图", style = MaterialTheme.typography.titleMedium)
+                    Text("分卷目标、阶段冲突、升级节奏与伏笔约束会自动进入后续写作上下文。", color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(
+                        value = blueprint,
+                        onValueChange = { blueprint = it; onSaveBlueprint(it) },
+                        label = { Text("可编辑的长篇路线图") },
+                        minLines = 7,
+                        modifier = Modifier.fillMaxWidth(),
+                    )
+                    OutlinedButton(
+                        onClick = if (isBlueprintGenerating) onCancelBlueprint else onGenerateBlueprint,
+                        enabled = isBlueprintGenerating || hasTextConfig,
+                    ) {
+                        Icon(if (isBlueprintGenerating) Icons.Outlined.Close else Icons.Outlined.AutoStories, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (isBlueprintGenerating) "取消生成" else "AI 生成长篇路线图")
+                    }
                 }
             }
         }
