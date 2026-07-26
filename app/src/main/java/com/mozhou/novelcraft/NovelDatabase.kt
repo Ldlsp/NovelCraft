@@ -128,6 +128,7 @@ data class ResearchNote(
     val sourceUrl: String = "",
     val tags: String = "",
     val content: String,
+    val rightsConfirmed: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 )
@@ -355,6 +356,9 @@ interface ResearchNoteDao {
 
     @Query("DELETE FROM research_notes WHERE id = :noteId")
     suspend fun deleteById(noteId: Long)
+
+    @Query("SELECT * FROM research_notes WHERE id = :noteId")
+    suspend fun findById(noteId: Long): ResearchNote?
 }
 
 @Dao
@@ -392,7 +396,7 @@ interface StoryEdgeDao {
 
 @Database(
     entities = [NovelProject::class, Chapter::class, ChapterRevision::class, AutoWriteRun::class, StoryItem::class, ChapterStoryMention::class, ResearchNote::class, EditorialReview::class, StoryAnchor::class, StoryEdge::class],
-    version = 15,
+    version = 16,
     exportSchema = false,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -590,11 +594,16 @@ abstract class NovelDatabase : RoomDatabase() {
                 db.execSQL("CREATE INDEX IF NOT EXISTS index_editorial_reviews_chapterId ON editorial_reviews(chapterId)")
             }
         }
+        private val MIGRATION_15_16 = object : Migration(15, 16) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE research_notes ADD COLUMN rightsConfirmed INTEGER NOT NULL DEFAULT 0")
+            }
+        }
 
         fun create(context: Context): NovelDatabase = Room.databaseBuilder(
             context.applicationContext,
             NovelDatabase::class.java,
             "novelcraft.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15, MIGRATION_15_16).build()
     }
 }

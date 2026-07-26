@@ -53,6 +53,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -185,8 +187,9 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                         NavigationBarItem(
                             selected = destination == MainDestination.SHELF,
                             onClick = { destination = MainDestination.SHELF },
-                            icon = { Icon(Icons.Outlined.AutoStories, null) },
-                            label = { Text("书架") },
+                            icon = { Icon(Icons.Outlined.AutoStories, "书架") },
+                            label = null,
+                            alwaysShowLabel = false,
                             colors = studioNavigationColors(),
                         )
                         NavigationBarItem(
@@ -534,8 +537,8 @@ private fun WorkspaceScreen(
     onAddAnchor: (Int, Int, String, String, String, String, String) -> Unit,
     onAddEdge: (Long, Long, String, String, Int) -> Unit,
     onExtractMemory: () -> Unit,
-    onAddResearchNote: (String, String, String, String) -> Unit,
-    onUpdateResearchNote: (ResearchNote, String, String, String, String) -> Unit,
+    onAddResearchNote: (String, String, String, String, Boolean) -> Unit,
+    onUpdateResearchNote: (ResearchNote, String, String, String, String, Boolean) -> Unit,
     onDeleteResearchNote: (ResearchNote) -> Unit,
     onAnalyzeReference: (ResearchNote) -> Unit,
     onGenerate: () -> Unit,
@@ -649,17 +652,17 @@ private fun ProjectTab(
     onSavePacing: (Int, Int, String) -> Unit,
     onDeleteProject: () -> Unit,
 ) {
-    var title by remember(project) { mutableStateOf(project.title) }
-    var genre by remember(project) { mutableStateOf(project.genre) }
-    var premise by remember(project) { mutableStateOf(project.premise) }
-    var summary by remember(project) { mutableStateOf(project.summary) }
-    var tags by remember(project) { mutableStateOf(project.tags) }
-    var audience by remember(project) { mutableStateOf(project.targetAudience) }
-    var protagonist by remember(project) { mutableStateOf(project.protagonistName) }
-    var blueprint by remember(project) { mutableStateOf(project.longFormBlueprint) }
-    var targetChapters by remember(project) { mutableStateOf(project.targetChapterCount.takeIf { it > 0 }?.toString().orEmpty()) }
-    var targetWords by remember(project) { mutableStateOf(project.targetWordCount.takeIf { it > 0 }?.toString().orEmpty()) }
-    var pacingProfile by remember(project) { mutableStateOf(project.pacingProfile) }
+    var title by remember(project.id) { mutableStateOf(project.title) }
+    var genre by remember(project.id) { mutableStateOf(project.genre) }
+    var premise by remember(project.id) { mutableStateOf(project.premise) }
+    var summary by remember(project.id) { mutableStateOf(project.summary) }
+    var tags by remember(project.id) { mutableStateOf(project.tags) }
+    var audience by remember(project.id) { mutableStateOf(project.targetAudience) }
+    var protagonist by remember(project.id) { mutableStateOf(project.protagonistName) }
+    var blueprint by remember(project.id) { mutableStateOf(project.longFormBlueprint) }
+    var targetChapters by remember(project.id) { mutableStateOf(project.targetChapterCount.takeIf { it > 0 }?.toString().orEmpty()) }
+    var targetWords by remember(project.id) { mutableStateOf(project.targetWordCount.takeIf { it > 0 }?.toString().orEmpty()) }
+    var pacingProfile by remember(project.id) { mutableStateOf(project.pacingProfile) }
     var deleteVisible by rememberSaveable { mutableStateOf(false) }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(onUploadCover) }
     LaunchedEffect(profileSuggestion) {
@@ -1295,8 +1298,8 @@ private fun ResourcesTab(
     onUpdate: (StoryItem, String, String, String, String) -> Unit,
     onAddEdge: (Long, Long, String, String, Int) -> Unit,
     onExtractMemory: () -> Unit,
-    onAddResearchNote: (String, String, String, String) -> Unit,
-    onUpdateResearchNote: (ResearchNote, String, String, String, String) -> Unit,
+    onAddResearchNote: (String, String, String, String, Boolean) -> Unit,
+    onUpdateResearchNote: (ResearchNote, String, String, String, String, Boolean) -> Unit,
     onDeleteResearchNote: (ResearchNote) -> Unit,
     onAnalyzeReference: (ResearchNote) -> Unit,
     onCancelExtraction: () -> Unit,
@@ -1413,8 +1416,8 @@ private fun ResourcesTab(
         )
     }
     if (researchDialogVisible) {
-        ResearchNoteDialog(onDismiss = { researchDialogVisible = false }, onSave = { title, url, tags, content ->
-            onAddResearchNote(title, url, tags, content)
+        ResearchNoteDialog(onDismiss = { researchDialogVisible = false }, onSave = { title, url, tags, content, rightsConfirmed ->
+            onAddResearchNote(title, url, tags, content, rightsConfirmed)
             researchDialogVisible = false
         })
     }
@@ -1422,7 +1425,7 @@ private fun ResourcesTab(
         ResearchNoteDialog(
             note = note,
             onDismiss = { editResearch = null },
-            onSave = { title, url, tags, content -> onUpdateResearchNote(note, title, url, tags, content); editResearch = null },
+            onSave = { title, url, tags, content, rightsConfirmed -> onUpdateResearchNote(note, title, url, tags, content, rightsConfirmed); editResearch = null },
             onDelete = { onDeleteResearchNote(note); editResearch = null },
             isAnalyzing = isAnalyzingReference,
             onAnalyze = { if (isAnalyzingReference) onCancelReferenceAnalysis() else onAnalyzeReference(note) },
@@ -1434,7 +1437,7 @@ private fun ResourcesTab(
 private fun ResearchNoteDialog(
     note: ResearchNote? = null,
     onDismiss: () -> Unit,
-    onSave: (String, String, String, String) -> Unit,
+    onSave: (String, String, String, String, Boolean) -> Unit,
     onDelete: (() -> Unit)? = null,
     isAnalyzing: Boolean = false,
     onAnalyze: (() -> Unit)? = null,
@@ -1443,6 +1446,7 @@ private fun ResearchNoteDialog(
     var url by remember(note) { mutableStateOf(note?.sourceUrl.orEmpty()) }
     var tags by remember(note) { mutableStateOf(note?.tags.orEmpty()) }
     var content by remember(note) { mutableStateOf(note?.content.orEmpty()) }
+    var rightsConfirmed by remember(note) { mutableStateOf(note?.rightsConfirmed ?: false) }
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (note == null) "添加调研笔记" else "编辑调研笔记") },
@@ -1452,9 +1456,13 @@ private fun ResearchNoteDialog(
                 OutlinedTextField(url, { url = it }, label = { Text("来源链接，可留空") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(tags, { tags = it }, label = { Text("标签") }, modifier = Modifier.fillMaxWidth())
                 OutlinedTextField(content, { content = it }, label = { Text("可验证的事实、结构或灵感摘要") }, minLines = 5, modifier = Modifier.fillMaxWidth())
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Checkbox(checked = rightsConfirmed, onCheckedChange = { rightsConfirmed = it })
+                    Text("我确认这是自写摘要或我拥有处理授权，不含受保护正文")
+                }
             }
         },
-        confirmButton = { Button(onClick = { onSave(title, url, tags, content) }, enabled = title.isNotBlank() && content.isNotBlank()) { Text("保存") } },
+        confirmButton = { Button(onClick = { onSave(title, url, tags, content, rightsConfirmed) }, enabled = title.isNotBlank() && content.isNotBlank()) { Text("保存") } },
         dismissButton = { Row { onDelete?.let { TextButton(onClick = it) { Text("删除", color = Red) } }; onAnalyze?.let { TextButton(onClick = it) { Text(if (isAnalyzing) "取消提炼" else "AI 结构提炼") } }; TextButton(onClick = onDismiss) { Text("取消") } } },
     )
 }

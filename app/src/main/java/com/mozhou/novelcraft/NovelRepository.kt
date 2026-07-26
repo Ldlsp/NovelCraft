@@ -305,15 +305,22 @@ class NovelRepository(private val database: NovelDatabase) {
         )
     }
 
-    suspend fun addResearchNote(projectId: Long, title: String, sourceUrl: String, tags: String, content: String) {
-        database.researchNoteDao().insert(ResearchNote(projectId = projectId, title = title.trim(), sourceUrl = sourceUrl.trim(), tags = tags.trim(), content = content.trim()))
+    suspend fun addResearchNote(projectId: Long, title: String, sourceUrl: String, tags: String, content: String, rightsConfirmed: Boolean) {
+        database.researchNoteDao().insert(ResearchNote(projectId = projectId, title = title.trim(), sourceUrl = sourceUrl.trim(), tags = tags.trim(), content = content.trim(), rightsConfirmed = rightsConfirmed))
     }
 
-    suspend fun updateResearchNote(note: ResearchNote, title: String, sourceUrl: String, tags: String, content: String) {
-        database.researchNoteDao().update(note.copy(title = title.trim(), sourceUrl = sourceUrl.trim(), tags = tags.trim(), content = content.trim(), updatedAt = System.currentTimeMillis()))
+    suspend fun updateResearchNote(note: ResearchNote, title: String, sourceUrl: String, tags: String, content: String, rightsConfirmed: Boolean) {
+        database.researchNoteDao().update(note.copy(title = title.trim(), sourceUrl = sourceUrl.trim(), tags = tags.trim(), content = content.trim(), rightsConfirmed = rightsConfirmed, updatedAt = System.currentTimeMillis()))
     }
 
     suspend fun deleteResearchNote(noteId: Long) = database.researchNoteDao().deleteById(noteId)
+
+    suspend fun appendResearchAnalysis(noteId: Long, analysis: String) = database.withTransaction {
+        val current = database.researchNoteDao().findById(noteId) ?: return@withTransaction
+        database.researchNoteDao().update(
+            current.copy(content = current.content.trimEnd() + "\n\n【AI 结构提炼】\n" + analysis.trim(), updatedAt = System.currentTimeMillis()),
+        )
+    }
 
     suspend fun addEditorialReview(projectId: Long, chapterId: Long, content: String) {
         database.editorialReviewDao().insert(EditorialReview(projectId = projectId, chapterId = chapterId, content = content.trim()))

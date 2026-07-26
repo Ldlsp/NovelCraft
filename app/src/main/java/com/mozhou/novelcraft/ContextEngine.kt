@@ -4,6 +4,7 @@ data class ContextPacket(
     val relevantItems: List<StoryItem> = emptyList(),
     val relevantEdges: List<StoryEdge> = emptyList(),
     val relevantChapters: List<Chapter> = emptyList(),
+    val relevantResearch: List<ResearchNote> = emptyList(),
     val activeAnchor: StoryAnchor? = null,
     val prompt: String = "",
 )
@@ -23,6 +24,7 @@ object ContextEngine {
         anchors: List<StoryAnchor> = emptyList(),
         edges: List<StoryEdge> = emptyList(),
         mentions: List<ChapterStoryMention> = emptyList(),
+        researchNotes: List<ResearchNote> = emptyList(),
     ): ContextPacket {
         val query = listOf(project.title, project.premise, current.title, current.content.takeLast(1_600)).joinToString("\n")
         val queryTerms = terms(query)
@@ -51,6 +53,12 @@ object ContextEngine {
             .ifEmpty { chapters.filter { it.number < current.number && it.content.isNotBlank() }.takeLast(2) }
 
         val anchor = anchors.firstOrNull { current.number in it.startChapter..it.endChapter }
+        val relevantResearch = researchNotes
+            .map { it to score(query, queryTerms, it.title + "\n" + it.tags + "\n" + it.content) }
+            .filter { it.second > 0 }
+            .sortedByDescending { it.second }
+            .take(4)
+            .map { it.first }
         val itemsById = storyItems.associateBy { it.id }
         val seedItemIds = relevantItems.map { it.id }.toSet()
         val relevantEdges = edges
@@ -59,7 +67,7 @@ object ContextEngine {
         val edgeItemIds = relevantEdges.flatMap { listOf(it.sourceItemId, it.targetItemId) }.toSet()
         val packetItems = (relevantItems + edgeItemIds.mapNotNull(itemsById::get))
             .distinctBy { it.id }
-        val packet = ContextPacket(packetItems, relevantEdges, retrievedChapters, anchor)
+        val packet = ContextPacket(packetItems, relevantEdges, retrievedChapters, relevantResearch, anchor)
         return packet.copy(prompt = buildPrompt(project, current, packet))
     }
 
@@ -68,6 +76,7 @@ object ContextEngine {
         appendLine("题材：${project.genre}")
         if (project.premise.isNotBlank()) appendLine("核心设定：${project.premise}")
         if (project.longFormBlueprint.isNotBlank()) appendLine("长篇路线图（必须遵守阶段目标与未解问题）：${project.longFormBlueprint.take(4_000)}")
+        if (project.targetChapterCount > 0) appendLine("全书节奏：${project.pacingProfile}，目标 ${project.targetChapterCount} 章 / ${project.targetWordCount.takeIf { it > 0 } ?: "未设"} 字；不得过早收束主线。")
         if (project.styleGuide.isNotBlank()) appendLine("项目文风档案（必须遵守）：${project.styleGuide}")
         appendLine("当前章节：第${current.number}章 ${current.title}")
         if (current.outline.isNotBlank()) appendLine("本章计划：${current.outline}")
@@ -99,6 +108,10 @@ object ContextEngine {
             packet.relevantChapters.forEach {
                 appendLine("- 第${it.number}章 ${it.title}：${it.content.takeLast(500)}")
             }
+        }
+        if (packet.relevantResearch.isNotEmpty()) {
+            appendLine("相关调研事实（仅作创作背景，不得编造来源外信息）：")
+            packet.relevantResearch.forEach { note -> appendLine("- ${note.title}：${note.content.take(700)}") }
         }
         appendLine("续写要求：延续当前叙事视角和时态；先推进一个可见动作；不要复述设定；不提前揭露未解谜底；结尾保留具体、可继续写的钩子。")
     }

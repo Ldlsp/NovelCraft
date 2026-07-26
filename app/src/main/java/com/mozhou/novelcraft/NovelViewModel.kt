@@ -104,8 +104,8 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         WritingContextInput(project, chapter, allChapters, items, projectAnchors)
     }
 
-    val contextPacket = combine(writingContextInput, edges, chapterMentions) { input, graphEdges, mentions ->
-        if (input.project == null || input.chapter == null) ContextPacket() else ContextEngine.build(input.project, input.chapter, input.chapters, input.items, input.anchors, graphEdges, mentions)
+    val contextPacket = combine(writingContextInput, edges, chapterMentions, researchNotes) { input, graphEdges, mentions, notes ->
+        if (input.project == null || input.chapter == null) ContextPacket() else ContextEngine.build(input.project, input.chapter, input.chapters, input.items, input.anchors, graphEdges, mentions, notes)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextPacket())
 
     val qualityIssues = combine(selectedProject, selectedChapter, storyItems, anchors) { project, chapter, items, projectAnchors ->
@@ -435,24 +435,24 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.updatePacing(project, targetChapters, targetWords, profile) }
     }
 
-    fun addResearchNote(title: String, sourceUrl: String, tags: String, content: String) {
+    fun addResearchNote(title: String, sourceUrl: String, tags: String, content: String, rightsConfirmed: Boolean) {
         val projectId = selectedProjectId.value ?: return
         if (title.isBlank() || content.isBlank()) {
             message.value = "请填写调研标题和内容"
             return
         }
         viewModelScope.launch {
-            repository.addResearchNote(projectId, title, sourceUrl, tags, content)
+            repository.addResearchNote(projectId, title, sourceUrl, tags, content, rightsConfirmed)
             message.value = "调研笔记已保存到本机"
         }
     }
 
-    fun updateResearchNote(note: ResearchNote, title: String, sourceUrl: String, tags: String, content: String) {
+    fun updateResearchNote(note: ResearchNote, title: String, sourceUrl: String, tags: String, content: String, rightsConfirmed: Boolean) {
         if (title.isBlank() || content.isBlank()) {
             message.value = "请填写调研标题和内容"
             return
         }
-        viewModelScope.launch { repository.updateResearchNote(note, title, sourceUrl, tags, content) }
+        viewModelScope.launch { repository.updateResearchNote(note, title, sourceUrl, tags, content, rightsConfirmed) }
     }
 
     fun deleteResearchNote(note: ResearchNote) {
@@ -460,6 +460,14 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun analyzeReferenceStructure(note: ResearchNote) {
+        if (!note.rightsConfirmed) {
+            message.value = "请先确认笔记为自写摘要或你拥有处理授权，不能分析受保护正文"
+            return
+        }
+        if (note.content.length > 4_000) {
+            message.value = "参考分析仅接受不超过 4000 字的自写摘要，不接受作品正文"
+            return
+        }
         val request = beginGeneration(GenerationTask.REFERENCE_ANALYSIS) ?: return
         message.value = "正在提炼参考结构..."
         val context = "标题：${note.title}\n标签：${note.tags}\n来源：${note.sourceUrl}\n作者摘要：\n${note.content}"
@@ -467,7 +475,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 modelClient.analyzeReferenceStructure(modelConfig.value, context, request).fold(
                     onSuccess = { analysis ->
-                        repository.updateResearchNote(note, note.title, note.sourceUrl, note.tags, note.content.trim() + "\n\n【AI 结构提炼】\n" + analysis)
+                        repository.appendResearchAnalysis(note.id, analysis)
                         message.value = "结构提炼已附加到调研笔记"
                     },
                     onFailure = { message.value = it.message ?: "结构提炼失败" },
@@ -485,9 +493,14 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
             message.value = "本章还没有正文，无法审稿"
             return
         }
+        val reviewerValues = listOf(modelConfig.value.reviewerBaseUrl, modelConfig.value.reviewerApiKey, modelConfig.value.reviewerModel)
+        if (reviewerValues.any(String::isBlank) && reviewerValues.any(String::isNotBlank)) {
+            message.value = "独立审稿模型需同时填写 Base URL、API Key 和模型名称，或全部留空"
+            return
+        }
         val request = beginGeneration(GenerationTask.EDITORIAL_REVIEW) ?: return
         message.value = "正在进行编辑审稿..."
-        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, edges.value, chapterMentions.value).prompt + "\n完整正文：\n${chapter.content}"
+        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, edges.value, chapterMentions.value, researchNotes.value).prompt + "\n完整正文：\n${chapter.content}"
         generationJobs[GenerationTask.EDITORIAL_REVIEW] = viewModelScope.launch {
             try {
                 modelClient.editorialReview(reviewModelConfig(), context, request).fold(
@@ -768,7 +781,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val request = beginGeneration(GenerationTask.REPAIR_PLAN) ?: return
         message.value = "正在生成最短修复计划..."
         val context = buildString {
-            append(ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value).prompt)
+            append(ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, researchNotes = researchNotes.value).prompt)
             appendLine("\n门禁问题：")
             issues.forEach { appendLine("- ${it.title}：${it.detail}") }
         }
@@ -794,7 +807,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val chapter = selectedChapter.value ?: return
         val request = beginGeneration(GenerationTask.CHAPTER_PLAN) ?: return
         message.value = "正在根据本地记忆生成本章计划..."
-        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value).prompt +
+        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, researchNotes = researchNotes.value).prompt +
             "\n请为当前章节生成大纲，覆盖冲突、转折和结尾钩子。"
         generationJobs[GenerationTask.CHAPTER_PLAN] = viewModelScope.launch {
             try {
@@ -818,7 +831,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val chapter = selectedChapter.value ?: return
         val request = beginGeneration(GenerationTask.BEAT_SHEET) ?: return
         message.value = "正在生成本章分镜..."
-        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value).prompt +
+        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, researchNotes = researchNotes.value).prompt +
             "\n请把本章计划拆成按顺序执行的场景分镜。"
         generationJobs[GenerationTask.BEAT_SHEET] = viewModelScope.launch {
             try {
@@ -892,7 +905,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val sourceChapter = chapter.copy(content = sourceContent)
         val request = beginGeneration(GenerationTask.CONTINUATION) ?: return
         message.value = "正在直接请求你的模型..."
-        val writingContext = ContextEngine.build(project, sourceChapter, chapters.value, storyItems.value, anchors.value).prompt
+        val writingContext = ContextEngine.build(project, sourceChapter, chapters.value, storyItems.value, anchors.value, researchNotes = researchNotes.value).prompt
         generationJobs[GenerationTask.CONTINUATION] = viewModelScope.launch {
             try {
                 val result = modelClient.continueWriting(modelConfig.value, writingContext, request)
@@ -938,7 +951,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                 repeat(currentRun.requestedCount - currentRun.completedCount) {
                     val nextNumber = (workingChapters.maxOfOrNull { it.number } ?: 0) + 1
                     val target = Chapter(projectId = project.id, number = nextNumber, title = "第${nextNumber}章")
-                    val context = ContextEngine.build(project, target, workingChapters, storyItems.value, anchors.value, edges.value).prompt +
+                    val context = ContextEngine.build(project, target, workingChapters, storyItems.value, anchors.value, edges.value, researchNotes = researchNotes.value).prompt +
                         "\n这是可恢复批量写作的第${currentRun.completedCount + 1}/${currentRun.requestedCount}章。请完整写出本章。"
                     val body = modelClient.writeFullChapter(modelConfig.value, context, request).getOrElse {
                         currentRun = repository.updateAutoWriteRun(currentRun, currentRun.completedCount, AutoWriteRunStatus.PAUSED, it.message ?: "模型请求失败")
@@ -1075,7 +1088,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                 val source = chapter.copy(content = content)
                 if (source.content != chapter.content) repository.updateChapter(chapter, source.content)
                 val context = buildString {
-                    append(ContextEngine.build(project, source, chapters.value, storyItems.value, anchors.value, edges.value).prompt)
+                    append(ContextEngine.build(project, source, chapters.value, storyItems.value, anchors.value, edges.value, researchNotes = researchNotes.value).prompt)
                     appendLine("\n当前完整正文：")
                     appendLine(source.content)
                     if (!humanize) {
