@@ -3,6 +3,7 @@ package com.mozhou.novelcraft
 import android.content.Context
 import androidx.room.Dao
 import androidx.room.Database
+import androidx.room.ColumnInfo
 import androidx.room.Entity
 import androidx.room.ForeignKey
 import androidx.room.Index
@@ -23,17 +24,17 @@ data class NovelProject(
     val title: String,
     val genre: String,
     val premise: String,
-    val styleGuide: String = "",
-    val outlineRevisionReport: String = "",
-    val summary: String = "",
-    val tags: String = "",
-    val targetAudience: String = "",
-    val protagonistName: String = "",
-    val longFormBlueprint: String = "",
-    val targetChapterCount: Int = 0,
-    val targetWordCount: Int = 0,
-    val pacingProfile: String = "均衡",
-    val coverPath: String = "",
+    @ColumnInfo(defaultValue = "''") val styleGuide: String = "",
+    @ColumnInfo(defaultValue = "''") val outlineRevisionReport: String = "",
+    @ColumnInfo(defaultValue = "''") val summary: String = "",
+    @ColumnInfo(defaultValue = "''") val tags: String = "",
+    @ColumnInfo(defaultValue = "''") val targetAudience: String = "",
+    @ColumnInfo(defaultValue = "''") val protagonistName: String = "",
+    @ColumnInfo(defaultValue = "''") val longFormBlueprint: String = "",
+    @ColumnInfo(defaultValue = "0") val targetChapterCount: Int = 0,
+    @ColumnInfo(defaultValue = "0") val targetWordCount: Int = 0,
+    @ColumnInfo(defaultValue = "'均衡'") val pacingProfile: String = "均衡",
+    @ColumnInfo(defaultValue = "''") val coverPath: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 )
@@ -46,7 +47,7 @@ data class NovelProject(
         childColumns = ["projectId"],
         onDelete = ForeignKey.CASCADE,
     )],
-    indices = [Index("projectId")],
+    indices = [Index("projectId"), Index("autoWriteRunId")],
 )
 data class Chapter(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
@@ -54,15 +55,15 @@ data class Chapter(
     val number: Int,
     val title: String,
     val content: String = "",
-    val outline: String = "",
-    val beatSheet: String = "",
-    val targetWordCount: Int = 0,
-    val qualityStatus: String = ChapterQualityStatus.READY,
-    val qualityIssueSummary: String = "",
-    val lifecycleStatus: String = ChapterLifecycleStatus.MANUAL,
-    val lifecycleDetail: String = "",
-    val memoryUpdatedAt: Long = 0,
-    val autoWriteRunId: Long = 0,
+    @ColumnInfo(defaultValue = "''") val outline: String = "",
+    @ColumnInfo(defaultValue = "''") val beatSheet: String = "",
+    @ColumnInfo(defaultValue = "0") val targetWordCount: Int = 0,
+    @ColumnInfo(defaultValue = "'ready'") val qualityStatus: String = ChapterQualityStatus.READY,
+    @ColumnInfo(defaultValue = "''") val qualityIssueSummary: String = "",
+    @ColumnInfo(defaultValue = "'manual'") val lifecycleStatus: String = ChapterLifecycleStatus.MANUAL,
+    @ColumnInfo(defaultValue = "''") val lifecycleDetail: String = "",
+    @ColumnInfo(defaultValue = "0") val memoryUpdatedAt: Long = 0,
+    @ColumnInfo(defaultValue = "0") val autoWriteRunId: Long = 0,
     val updatedAt: Long = System.currentTimeMillis(),
 )
 
@@ -128,7 +129,7 @@ data class ResearchNote(
     val sourceUrl: String = "",
     val tags: String = "",
     val content: String,
-    val rightsConfirmed: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val rightsConfirmed: Boolean = false,
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
 )
@@ -176,9 +177,9 @@ data class StoryItem(
     val kind: String,
     val name: String,
     val detail: String,
-    val status: String = StoryItemStatus.ACTIVE,
+    @ColumnInfo(defaultValue = "'活跃'") val status: String = StoryItemStatus.ACTIVE,
     val updatedAt: Long = System.currentTimeMillis(),
-    val cascadePending: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val cascadePending: Boolean = false,
 )
 
 @Entity(
@@ -201,7 +202,7 @@ data class StoryAnchor(
     val allowedPlot: String = "",
     val forbiddenReveals: String = "",
     val mandatoryTension: String = "",
-    val cascadePending: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val cascadePending: Boolean = false,
 )
 
 @Entity(
@@ -223,7 +224,7 @@ data class StoryEdge(
     val strength: Float = 0.5f,
     val description: String = "",
     val sinceChapter: Int = 1,
-    val cascadePending: Boolean = false,
+    @ColumnInfo(defaultValue = "0") val cascadePending: Boolean = false,
 )
 
 object StoryItemStatus {
