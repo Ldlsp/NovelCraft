@@ -30,6 +30,9 @@ data class NovelProject(
     val targetAudience: String = "",
     val protagonistName: String = "",
     val longFormBlueprint: String = "",
+    val targetChapterCount: Int = 0,
+    val targetWordCount: Int = 0,
+    val pacingProfile: String = "均衡",
     val coverPath: String = "",
     val createdAt: Long = System.currentTimeMillis(),
     val updatedAt: Long = System.currentTimeMillis(),
@@ -110,6 +113,38 @@ data class ChapterStoryMention(
     val projectId: Long,
     val chapterId: Long,
     val storyItemId: Long,
+    val createdAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(
+    tableName = "research_notes",
+    foreignKeys = [ForeignKey(entity = NovelProject::class, parentColumns = ["id"], childColumns = ["projectId"], onDelete = ForeignKey.CASCADE)],
+    indices = [Index("projectId")],
+)
+data class ResearchNote(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val projectId: Long,
+    val title: String,
+    val sourceUrl: String = "",
+    val tags: String = "",
+    val content: String,
+    val createdAt: Long = System.currentTimeMillis(),
+    val updatedAt: Long = System.currentTimeMillis(),
+)
+
+@Entity(
+    tableName = "editorial_reviews",
+    foreignKeys = [
+        ForeignKey(entity = NovelProject::class, parentColumns = ["id"], childColumns = ["projectId"], onDelete = ForeignKey.CASCADE),
+        ForeignKey(entity = Chapter::class, parentColumns = ["id"], childColumns = ["chapterId"], onDelete = ForeignKey.CASCADE),
+    ],
+    indices = [Index("projectId"), Index("chapterId")],
+)
+data class EditorialReview(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val projectId: Long,
+    val chapterId: Long,
+    val content: String,
     val createdAt: Long = System.currentTimeMillis(),
 )
 
@@ -308,6 +343,30 @@ interface ChapterStoryMentionDao {
 }
 
 @Dao
+interface ResearchNoteDao {
+    @Query("SELECT * FROM research_notes WHERE projectId = :projectId ORDER BY updatedAt DESC")
+    fun observeByProject(projectId: Long): Flow<List<ResearchNote>>
+
+    @Insert
+    suspend fun insert(note: ResearchNote): Long
+
+    @Update
+    suspend fun update(note: ResearchNote)
+
+    @Query("DELETE FROM research_notes WHERE id = :noteId")
+    suspend fun deleteById(noteId: Long)
+}
+
+@Dao
+interface EditorialReviewDao {
+    @Query("SELECT * FROM editorial_reviews WHERE chapterId = :chapterId ORDER BY createdAt DESC LIMIT 1")
+    fun observeLatest(chapterId: Long): Flow<EditorialReview?>
+
+    @Insert
+    suspend fun insert(review: EditorialReview): Long
+}
+
+@Dao
 interface StoryAnchorDao {
     @Query("SELECT * FROM story_anchors WHERE projectId = :projectId ORDER BY startChapter ASC, endChapter ASC")
     fun observeByProject(projectId: Long): Flow<List<StoryAnchor>>
@@ -332,8 +391,8 @@ interface StoryEdgeDao {
 }
 
 @Database(
-    entities = [NovelProject::class, Chapter::class, ChapterRevision::class, AutoWriteRun::class, StoryItem::class, ChapterStoryMention::class, StoryAnchor::class, StoryEdge::class],
-    version = 14,
+    entities = [NovelProject::class, Chapter::class, ChapterRevision::class, AutoWriteRun::class, StoryItem::class, ChapterStoryMention::class, ResearchNote::class, EditorialReview::class, StoryAnchor::class, StoryEdge::class],
+    version = 15,
     exportSchema = false,
 )
 abstract class NovelDatabase : RoomDatabase() {
@@ -343,6 +402,8 @@ abstract class NovelDatabase : RoomDatabase() {
     abstract fun autoWriteRunDao(): AutoWriteRunDao
     abstract fun storyItemDao(): StoryItemDao
     abstract fun chapterStoryMentionDao(): ChapterStoryMentionDao
+    abstract fun researchNoteDao(): ResearchNoteDao
+    abstract fun editorialReviewDao(): EditorialReviewDao
     abstract fun storyAnchorDao(): StoryAnchorDao
     abstract fun storyEdgeDao(): StoryEdgeDao
 
@@ -495,11 +556,45 @@ abstract class NovelDatabase : RoomDatabase() {
                 db.execSQL("ALTER TABLE projects ADD COLUMN longFormBlueprint TEXT NOT NULL DEFAULT ''")
             }
         }
+        private val MIGRATION_14_15 = object : Migration(14, 15) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE projects ADD COLUMN targetChapterCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE projects ADD COLUMN targetWordCount INTEGER NOT NULL DEFAULT 0")
+                db.execSQL("ALTER TABLE projects ADD COLUMN pacingProfile TEXT NOT NULL DEFAULT '均衡'")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS research_notes (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        projectId INTEGER NOT NULL,
+                        title TEXT NOT NULL,
+                        sourceUrl TEXT NOT NULL,
+                        tags TEXT NOT NULL,
+                        content TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        updatedAt INTEGER NOT NULL,
+                        FOREIGN KEY(projectId) REFERENCES projects(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_research_notes_projectId ON research_notes(projectId)")
+                db.execSQL("""
+                    CREATE TABLE IF NOT EXISTS editorial_reviews (
+                        id INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        projectId INTEGER NOT NULL,
+                        chapterId INTEGER NOT NULL,
+                        content TEXT NOT NULL,
+                        createdAt INTEGER NOT NULL,
+                        FOREIGN KEY(projectId) REFERENCES projects(id) ON DELETE CASCADE,
+                        FOREIGN KEY(chapterId) REFERENCES chapters(id) ON DELETE CASCADE
+                    )
+                """.trimIndent())
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_editorial_reviews_projectId ON editorial_reviews(projectId)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS index_editorial_reviews_chapterId ON editorial_reviews(chapterId)")
+            }
+        }
 
         fun create(context: Context): NovelDatabase = Room.databaseBuilder(
             context.applicationContext,
             NovelDatabase::class.java,
             "novelcraft.db",
-        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14).build()
+        ).addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5, MIGRATION_5_6, MIGRATION_6_7, MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10, MIGRATION_10_11, MIGRATION_11_12, MIGRATION_12_13, MIGRATION_13_14, MIGRATION_14_15).build()
     }
 }

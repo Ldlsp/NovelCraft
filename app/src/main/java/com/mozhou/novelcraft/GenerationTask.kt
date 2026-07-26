@@ -11,6 +11,8 @@ enum class GenerationTask(val label: String) {
     REPAIR_PLAN("修复计划"),
     CHAPTER_REWRITE("AI 改写"),
     HUMANIZE("去 AI 味润色"),
+    EDITORIAL_REVIEW("编辑审稿"),
+    REFERENCE_ANALYSIS("结构提炼"),
     COVER("封面"),
     PROJECT_PROFILE("作品设定"),
     LONG_FORM_BLUEPRINT("长篇路线图"),

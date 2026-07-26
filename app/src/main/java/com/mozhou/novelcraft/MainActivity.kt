@@ -132,7 +132,9 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
     val chapters by viewModel.chapters.collectAsStateWithLifecycle()
     val selectedChapter by viewModel.selectedChapter.collectAsStateWithLifecycle()
     val latestRevision by viewModel.latestRevision.collectAsStateWithLifecycle()
+    val latestEditorialReview by viewModel.latestEditorialReview.collectAsStateWithLifecycle()
     val resumableAutoWriteRun by viewModel.resumableAutoWriteRun.collectAsStateWithLifecycle()
+    val researchNotes by viewModel.researchNotes.collectAsStateWithLifecycle()
     val storyItems by viewModel.storyItems.collectAsStateWithLifecycle()
     val anchors by viewModel.anchors.collectAsStateWithLifecycle()
     val edges by viewModel.edges.collectAsStateWithLifecycle()
@@ -233,7 +235,9 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 chapters = chapters,
                                 selectedChapter = selectedChapter,
                                 latestRevision = latestRevision,
+                                latestEditorialReview = latestEditorialReview,
                                 resumableAutoWriteRun = resumableAutoWriteRun,
+                                researchNotes = researchNotes,
                                 storyItems = storyItems,
                                 anchors = anchors,
                                 edges = edges,
@@ -257,6 +261,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onGenerateProjectProfile = viewModel::generateProjectProfile,
                                 onSaveLongFormBlueprint = viewModel::saveLongFormBlueprint,
                                 onGenerateLongFormBlueprint = viewModel::generateLongFormBlueprint,
+                                onSavePacing = viewModel::savePacing,
                                 onSaveChapterPlan = viewModel::saveChapterPlan,
                                 onSaveBeatSheet = viewModel::saveBeatSheet,
                                 onSaveStyleGuide = viewModel::saveStyleGuide,
@@ -265,6 +270,10 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onAddAnchor = viewModel::addAnchor,
                                 onAddEdge = viewModel::addEdge,
                                 onExtractMemory = viewModel::extractMemoryFromCurrentChapter,
+                                onAddResearchNote = viewModel::addResearchNote,
+                                onUpdateResearchNote = viewModel::updateResearchNote,
+                                onDeleteResearchNote = viewModel::deleteResearchNote,
+                                onAnalyzeReference = viewModel::analyzeReferenceStructure,
                                 onGenerate = viewModel::generateContinuation,
                                 onAutoWrite = viewModel::autoWriteChapters,
                                 onResumeAutoWrite = viewModel::resumeAutoWrite,
@@ -278,6 +287,7 @@ private fun NovelCraftApp(viewModel: NovelViewModel = viewModel()) {
                                 onRewriteChapter = viewModel::rewriteCurrentChapterForGate,
                                 onHumanizeChapter = viewModel::humanizeCurrentChapter,
                                 onRestoreRevision = viewModel::restoreLatestRevision,
+                                onGenerateEditorialReview = viewModel::generateEditorialReview,
                                 onReviseOutline = viewModel::reviseOutline,
                                 onResolveOutlineCascade = viewModel::resolveOutlineCascade,
                             )
@@ -489,7 +499,9 @@ private fun WorkspaceScreen(
     chapters: List<Chapter>,
     selectedChapter: Chapter?,
     latestRevision: ChapterRevision?,
+    latestEditorialReview: EditorialReview?,
     resumableAutoWriteRun: AutoWriteRun?,
+    researchNotes: List<ResearchNote>,
     storyItems: List<StoryItem>,
     anchors: List<StoryAnchor>,
     edges: List<StoryEdge>,
@@ -513,6 +525,7 @@ private fun WorkspaceScreen(
     onGenerateProjectProfile: () -> Unit,
     onSaveLongFormBlueprint: (String) -> Unit,
     onGenerateLongFormBlueprint: () -> Unit,
+    onSavePacing: (Int, Int, String) -> Unit,
     onSaveChapterPlan: (String, Int) -> Unit,
     onSaveBeatSheet: (String) -> Unit,
     onSaveStyleGuide: (String) -> Unit,
@@ -521,6 +534,10 @@ private fun WorkspaceScreen(
     onAddAnchor: (Int, Int, String, String, String, String, String) -> Unit,
     onAddEdge: (Long, Long, String, String, Int) -> Unit,
     onExtractMemory: () -> Unit,
+    onAddResearchNote: (String, String, String, String) -> Unit,
+    onUpdateResearchNote: (ResearchNote, String, String, String, String) -> Unit,
+    onDeleteResearchNote: (ResearchNote) -> Unit,
+    onAnalyzeReference: (ResearchNote) -> Unit,
     onGenerate: () -> Unit,
     onAutoWrite: (Int) -> Unit,
     onResumeAutoWrite: () -> Unit,
@@ -534,6 +551,7 @@ private fun WorkspaceScreen(
     onRewriteChapter: () -> Unit,
     onHumanizeChapter: () -> Unit,
     onRestoreRevision: () -> Unit,
+    onGenerateEditorialReview: () -> Unit,
     onReviseOutline: (Int, String) -> Unit,
     onResolveOutlineCascade: () -> Unit,
 ) {
@@ -562,13 +580,15 @@ private fun WorkspaceScreen(
                 onSaveBlueprint = onSaveLongFormBlueprint,
                 onGenerateBlueprint = onGenerateLongFormBlueprint,
                 onCancelBlueprint = { onCancelGeneration(GenerationTask.LONG_FORM_BLUEPRINT) },
+                onSavePacing = onSavePacing,
                 onDeleteProject = onDeleteProject,
             )
             WorkspaceTab.OUTLINE -> OutlineTab(project, chapters, selectedChapter, anchors, config, activeTasks, onSaveChapterPlan, onSaveBeatSheet, onSaveStyleGuide, onGeneratePlan, onGenerateBeatSheet, onExtractStyleGuide, onCancelGeneration, onAddAnchor, onReviseOutline, onResolveOutlineCascade)
-            WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, GenerationTask.MEMORY_EXTRACTION in activeTasks, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory, { onCancelGeneration(GenerationTask.MEMORY_EXTRACTION) })
+            WorkspaceTab.RESOURCES -> ResourcesTab(storyItems, edges, researchNotes, GenerationTask.MEMORY_EXTRACTION in activeTasks, GenerationTask.REFERENCE_ANALYSIS in activeTasks, onAddStoryItem, onUpdateStoryItem, onAddEdge, onExtractMemory, onAddResearchNote, onUpdateResearchNote, onDeleteResearchNote, onAnalyzeReference, { onCancelGeneration(GenerationTask.MEMORY_EXTRACTION) }, { onCancelGeneration(GenerationTask.REFERENCE_ANALYSIS) })
             WorkspaceTab.REVIEW -> ReviewTab(
                 selectedChapter,
                 latestRevision,
+                latestEditorialReview,
                 qualityIssues,
                 repairPlan,
                 config,
@@ -580,6 +600,9 @@ private fun WorkspaceScreen(
                 onRewriteChapter,
                 onHumanizeChapter,
                 onRestoreRevision,
+                GenerationTask.EDITORIAL_REVIEW in activeTasks,
+                onGenerateEditorialReview,
+                { onCancelGeneration(GenerationTask.EDITORIAL_REVIEW) },
                 { onCancelGeneration(GenerationTask.REPAIR_PLAN) },
                 { onCancelGeneration(GenerationTask.CHAPTER_LIFECYCLE) },
             )
@@ -623,6 +646,7 @@ private fun ProjectTab(
     onSaveBlueprint: (String) -> Unit,
     onGenerateBlueprint: () -> Unit,
     onCancelBlueprint: () -> Unit,
+    onSavePacing: (Int, Int, String) -> Unit,
     onDeleteProject: () -> Unit,
 ) {
     var title by remember(project) { mutableStateOf(project.title) }
@@ -633,6 +657,9 @@ private fun ProjectTab(
     var audience by remember(project) { mutableStateOf(project.targetAudience) }
     var protagonist by remember(project) { mutableStateOf(project.protagonistName) }
     var blueprint by remember(project) { mutableStateOf(project.longFormBlueprint) }
+    var targetChapters by remember(project) { mutableStateOf(project.targetChapterCount.takeIf { it > 0 }?.toString().orEmpty()) }
+    var targetWords by remember(project) { mutableStateOf(project.targetWordCount.takeIf { it > 0 }?.toString().orEmpty()) }
+    var pacingProfile by remember(project) { mutableStateOf(project.pacingProfile) }
     var deleteVisible by rememberSaveable { mutableStateOf(false) }
     val coverPicker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri -> uri?.let(onUploadCover) }
     LaunchedEffect(profileSuggestion) {
@@ -728,6 +755,24 @@ private fun ProjectTab(
                         Spacer(Modifier.width(6.dp))
                         Text(if (isBlueprintGenerating) "取消生成" else "AI 生成长篇路线图")
                     }
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE5F0ED))) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("长篇节奏约束", style = MaterialTheme.typography.titleMedium)
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                        OutlinedTextField(value = targetChapters, onValueChange = { targetChapters = it.filter(Char::isDigit); onSavePacing(targetChapters.toIntOrNull() ?: 0, targetWords.toIntOrNull() ?: 0, pacingProfile) }, label = { Text("目标章节") }, modifier = Modifier.weight(1f), singleLine = true)
+                        OutlinedTextField(value = targetWords, onValueChange = { targetWords = it.filter(Char::isDigit); onSavePacing(targetChapters.toIntOrNull() ?: 0, targetWords.toIntOrNull() ?: 0, pacingProfile) }, label = { Text("目标总字数") }, modifier = Modifier.weight(1f), singleLine = true)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("慢燃", "均衡", "快节奏").forEach { profile ->
+                            if (pacingProfile == profile) Button(onClick = { pacingProfile = profile; onSavePacing(targetChapters.toIntOrNull() ?: 0, targetWords.toIntOrNull() ?: 0, profile) }) { Text(profile) }
+                            else OutlinedButton(onClick = { pacingProfile = profile; onSavePacing(targetChapters.toIntOrNull() ?: 0, targetWords.toIntOrNull() ?: 0, profile) }) { Text(profile) }
+                        }
+                    }
+                    Text("完成度未到 70% 时，系统会拦截“最终胜利 / 一切结束”等可能过早收束的主线表达。", color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
                 }
             }
         }
@@ -1243,16 +1288,25 @@ private fun ChapterPlanEditor(
 private fun ResourcesTab(
     items: List<StoryItem>,
     edges: List<StoryEdge>,
+    researchNotes: List<ResearchNote>,
     isExtracting: Boolean,
+    isAnalyzingReference: Boolean,
     onAdd: (String, String, String, String) -> Unit,
     onUpdate: (StoryItem, String, String, String, String) -> Unit,
     onAddEdge: (Long, Long, String, String, Int) -> Unit,
     onExtractMemory: () -> Unit,
+    onAddResearchNote: (String, String, String, String) -> Unit,
+    onUpdateResearchNote: (ResearchNote, String, String, String, String) -> Unit,
+    onDeleteResearchNote: (ResearchNote) -> Unit,
+    onAnalyzeReference: (ResearchNote) -> Unit,
     onCancelExtraction: () -> Unit,
+    onCancelReferenceAnalysis: () -> Unit,
 ) {
     var dialogVisible by rememberSaveable { mutableStateOf(false) }
     var editItem by remember { mutableStateOf<StoryItem?>(null) }
     var edgeDialogVisible by rememberSaveable { mutableStateOf(false) }
+    var researchDialogVisible by rememberSaveable { mutableStateOf(false) }
+    var editResearch by remember { mutableStateOf<ResearchNote?>(null) }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         item {
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
@@ -1265,6 +1319,28 @@ private fun ResourcesTab(
                     IconButton(onClick = if (isExtracting) onCancelExtraction else onExtractMemory) { Icon(if (isExtracting) Icons.Outlined.Close else Icons.Outlined.AutoStories, if (isExtracting) "取消知识图谱提取" else "从当前章节提取记忆") }
                     IconButton(onClick = { edgeDialogVisible = true }, enabled = items.size >= 2) { Icon(Icons.Outlined.People, "添加关系") }
                     IconButton(onClick = { dialogVisible = true }) { Icon(Icons.Outlined.Add, "添加资料") }
+                }
+            }
+        }
+        item {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text("调研知识库", style = MaterialTheme.typography.titleMedium)
+                    Text("仅保存你的摘要、来源和创作可用事实；不导入或复现受版权保护的正文。", color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
+                }
+                IconButton(onClick = { researchDialogVisible = true }) { Icon(Icons.Outlined.Add, "添加调研笔记") }
+            }
+        }
+        if (researchNotes.isEmpty()) {
+            item { Text("尚无调研笔记", color = SecondaryLabel, style = MaterialTheme.typography.bodySmall) }
+        } else {
+            items(researchNotes, key = { "research-${it.id}" }) { note ->
+                Card(onClick = { editResearch = note }) {
+                    Column(Modifier.padding(14.dp)) {
+                        Text(note.title, style = MaterialTheme.typography.titleSmall)
+                        if (note.tags.isNotBlank()) Text(note.tags, color = Teal, style = MaterialTheme.typography.labelSmall)
+                        Text(note.content, color = SecondaryLabel, style = MaterialTheme.typography.bodySmall, maxLines = 3, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }
@@ -1336,6 +1412,51 @@ private fun ResourcesTab(
             },
         )
     }
+    if (researchDialogVisible) {
+        ResearchNoteDialog(onDismiss = { researchDialogVisible = false }, onSave = { title, url, tags, content ->
+            onAddResearchNote(title, url, tags, content)
+            researchDialogVisible = false
+        })
+    }
+    editResearch?.let { note ->
+        ResearchNoteDialog(
+            note = note,
+            onDismiss = { editResearch = null },
+            onSave = { title, url, tags, content -> onUpdateResearchNote(note, title, url, tags, content); editResearch = null },
+            onDelete = { onDeleteResearchNote(note); editResearch = null },
+            isAnalyzing = isAnalyzingReference,
+            onAnalyze = { if (isAnalyzingReference) onCancelReferenceAnalysis() else onAnalyzeReference(note) },
+        )
+    }
+}
+
+@Composable
+private fun ResearchNoteDialog(
+    note: ResearchNote? = null,
+    onDismiss: () -> Unit,
+    onSave: (String, String, String, String) -> Unit,
+    onDelete: (() -> Unit)? = null,
+    isAnalyzing: Boolean = false,
+    onAnalyze: (() -> Unit)? = null,
+) {
+    var title by remember(note) { mutableStateOf(note?.title.orEmpty()) }
+    var url by remember(note) { mutableStateOf(note?.sourceUrl.orEmpty()) }
+    var tags by remember(note) { mutableStateOf(note?.tags.orEmpty()) }
+    var content by remember(note) { mutableStateOf(note?.content.orEmpty()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(if (note == null) "添加调研笔记" else "编辑调研笔记") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(title, { title = it }, label = { Text("标题") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(url, { url = it }, label = { Text("来源链接，可留空") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(tags, { tags = it }, label = { Text("标签") }, modifier = Modifier.fillMaxWidth())
+                OutlinedTextField(content, { content = it }, label = { Text("可验证的事实、结构或灵感摘要") }, minLines = 5, modifier = Modifier.fillMaxWidth())
+            }
+        },
+        confirmButton = { Button(onClick = { onSave(title, url, tags, content) }, enabled = title.isNotBlank() && content.isNotBlank()) { Text("保存") } },
+        dismissButton = { Row { onDelete?.let { TextButton(onClick = it) { Text("删除", color = Red) } }; onAnalyze?.let { TextButton(onClick = it) { Text(if (isAnalyzing) "取消提炼" else "AI 结构提炼") } }; TextButton(onClick = onDismiss) { Text("取消") } } },
+    )
 }
 
 @Composable
@@ -1378,6 +1499,7 @@ private fun StoryEdgeDialog(
 private fun ReviewTab(
     chapter: Chapter?,
     latestRevision: ChapterRevision?,
+    latestEditorialReview: EditorialReview?,
     issues: List<QualityIssue>,
     repairPlan: String?,
     config: ModelConfig,
@@ -1389,6 +1511,9 @@ private fun ReviewTab(
     onRewriteChapter: () -> Unit,
     onHumanizeChapter: () -> Unit,
     onRestoreRevision: () -> Unit,
+    isEditorialReviewing: Boolean,
+    onGenerateEditorialReview: () -> Unit,
+    onCancelEditorialReview: () -> Unit,
     onCancel: () -> Unit,
     onCancelLifecycle: () -> Unit,
 ) {
@@ -1444,6 +1569,25 @@ private fun ReviewTab(
                         latestRevision?.let { revision ->
                             TextButton(onClick = onRestoreRevision) { Text("撤回上次 AI 改写（${revision.reason}）") }
                         }
+                    }
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F3FF))) {
+                Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text("编辑审稿", style = MaterialTheme.typography.titleSmall)
+                    Text("独立生成一份 P0/P1/P2 审稿记录，不会改动正文。", color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
+                    OutlinedButton(
+                        onClick = if (isEditorialReviewing) onCancelEditorialReview else onGenerateEditorialReview,
+                        enabled = isEditorialReviewing || (chapter?.content?.isNotBlank() == true && config.baseUrl.isNotBlank() && config.apiKey.isNotBlank() && config.model.isNotBlank()),
+                    ) {
+                        Icon(if (isEditorialReviewing) Icons.Outlined.Close else Icons.Outlined.Lightbulb, null)
+                        Spacer(Modifier.width(6.dp))
+                        Text(if (isEditorialReviewing) "取消审稿" else "生成编辑审稿")
+                    }
+                    latestEditorialReview?.let { review ->
+                        Text(review.content, color = Ink, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }
@@ -1506,6 +1650,9 @@ private fun ModelSettingsScreen(
     var imageBaseUrl by remember(config) { mutableStateOf(config.imageBaseUrl) }
     var imageApiKey by remember(config) { mutableStateOf(config.imageApiKey) }
     var imageModel by remember(config) { mutableStateOf(config.imageModel) }
+    var reviewerBaseUrl by remember(config) { mutableStateOf(config.reviewerBaseUrl) }
+    var reviewerApiKey by remember(config) { mutableStateOf(config.reviewerApiKey) }
+    var reviewerModel by remember(config) { mutableStateOf(config.reviewerModel) }
     val current = ModelConfig(
         baseUrl = baseUrl,
         apiKey = apiKey,
@@ -1513,6 +1660,9 @@ private fun ModelSettingsScreen(
         imageBaseUrl = imageBaseUrl,
         imageApiKey = imageApiKey,
         imageModel = imageModel,
+        reviewerBaseUrl = reviewerBaseUrl,
+        reviewerApiKey = reviewerApiKey,
+        reviewerModel = reviewerModel,
     )
     LazyColumn(Modifier.fillMaxSize(), contentPadding = androidx.compose.foundation.layout.PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
         item {
@@ -1531,6 +1681,18 @@ private fun ModelSettingsScreen(
                         OutlinedButton(onClick = { onTest(current) }, modifier = Modifier.weight(1f).height(48.dp)) { Text("测试文本 AI") }
                         Button(onClick = { onSave(current) }, modifier = Modifier.weight(1f).height(48.dp)) { Text("保存") }
                     }
+                }
+            }
+        }
+        item {
+            Card(colors = CardDefaults.cardColors(containerColor = Color(0xFFE8F3FF))) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    Text("独立审稿模型（可选）", style = MaterialTheme.typography.titleMedium)
+                    Text("填写后，编辑审稿会使用该模型；留空则使用文本创作模型。", color = SecondaryLabel, style = MaterialTheme.typography.bodySmall)
+                    OutlinedTextField(value = reviewerBaseUrl, onValueChange = { reviewerBaseUrl = it }, label = { Text("审稿 Base URL（HTTPS）") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = reviewerApiKey, onValueChange = { reviewerApiKey = it }, label = { Text("审稿 API Key") }, singleLine = true, visualTransformation = PasswordVisualTransformation(), modifier = Modifier.fillMaxWidth())
+                    OutlinedTextField(value = reviewerModel, onValueChange = { reviewerModel = it }, label = { Text("审稿模型名称") }, singleLine = true, modifier = Modifier.fillMaxWidth())
+                    Button(onClick = { onSave(current) }, modifier = Modifier.fillMaxWidth().height(48.dp)) { Text("保存审稿模型") }
                 }
             }
         }

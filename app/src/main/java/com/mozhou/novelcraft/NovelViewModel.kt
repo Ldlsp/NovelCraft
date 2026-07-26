@@ -72,6 +72,10 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         if (id == null) flowOf(emptyList()) else repository.chapterMentions(id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    val researchNotes = selectedProjectId.flatMapLatest { id ->
+        if (id == null) flowOf(emptyList()) else repository.researchNotes(id)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val anchors = selectedProjectId.flatMapLatest { id ->
         if (id == null) flowOf(emptyList()) else repository.anchors(id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -88,6 +92,10 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         if (chapter == null) flowOf(null) else repository.latestRevision(chapter.id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val latestEditorialReview = selectedChapter.flatMapLatest { chapter ->
+        if (chapter == null) flowOf(null) else repository.latestEditorialReview(chapter.id)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     val resumableAutoWriteRun = selectedProjectId.flatMapLatest { projectId ->
         if (projectId == null) flowOf(null) else repository.resumableAutoWriteRun(projectId)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -100,8 +108,8 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         if (input.project == null || input.chapter == null) ContextPacket() else ContextEngine.build(input.project, input.chapter, input.chapters, input.items, input.anchors, graphEdges, mentions)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextPacket())
 
-    val qualityIssues = combine(selectedChapter, storyItems, anchors) { chapter, items, projectAnchors ->
-        QualityGate.inspect(chapter, items, projectAnchors)
+    val qualityIssues = combine(selectedProject, selectedChapter, storyItems, anchors) { project, chapter, items, projectAnchors ->
+        QualityGate.inspect(chapter, items, projectAnchors, project)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val modelConfig = MutableStateFlow(modelPreferences.load())
@@ -422,6 +430,84 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.updateLongFormBlueprint(project, blueprint) }
     }
 
+    fun savePacing(targetChapters: Int, targetWords: Int, profile: String) {
+        val project = selectedProject.value ?: return
+        viewModelScope.launch { repository.updatePacing(project, targetChapters, targetWords, profile) }
+    }
+
+    fun addResearchNote(title: String, sourceUrl: String, tags: String, content: String) {
+        val projectId = selectedProjectId.value ?: return
+        if (title.isBlank() || content.isBlank()) {
+            message.value = "请填写调研标题和内容"
+            return
+        }
+        viewModelScope.launch {
+            repository.addResearchNote(projectId, title, sourceUrl, tags, content)
+            message.value = "调研笔记已保存到本机"
+        }
+    }
+
+    fun updateResearchNote(note: ResearchNote, title: String, sourceUrl: String, tags: String, content: String) {
+        if (title.isBlank() || content.isBlank()) {
+            message.value = "请填写调研标题和内容"
+            return
+        }
+        viewModelScope.launch { repository.updateResearchNote(note, title, sourceUrl, tags, content) }
+    }
+
+    fun deleteResearchNote(note: ResearchNote) {
+        viewModelScope.launch { repository.deleteResearchNote(note.id) }
+    }
+
+    fun analyzeReferenceStructure(note: ResearchNote) {
+        val request = beginGeneration(GenerationTask.REFERENCE_ANALYSIS) ?: return
+        message.value = "正在提炼参考结构..."
+        val context = "标题：${note.title}\n标签：${note.tags}\n来源：${note.sourceUrl}\n作者摘要：\n${note.content}"
+        generationJobs[GenerationTask.REFERENCE_ANALYSIS] = viewModelScope.launch {
+            try {
+                modelClient.analyzeReferenceStructure(modelConfig.value, context, request).fold(
+                    onSuccess = { analysis ->
+                        repository.updateResearchNote(note, note.title, note.sourceUrl, note.tags, note.content.trim() + "\n\n【AI 结构提炼】\n" + analysis)
+                        message.value = "结构提炼已附加到调研笔记"
+                    },
+                    onFailure = { message.value = it.message ?: "结构提炼失败" },
+                )
+            } finally {
+                finishGeneration(GenerationTask.REFERENCE_ANALYSIS, request)
+            }
+        }
+    }
+
+    fun generateEditorialReview() {
+        val project = selectedProject.value ?: return
+        val chapter = selectedChapter.value ?: return
+        if (chapter.content.isBlank()) {
+            message.value = "本章还没有正文，无法审稿"
+            return
+        }
+        val request = beginGeneration(GenerationTask.EDITORIAL_REVIEW) ?: return
+        message.value = "正在进行编辑审稿..."
+        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, edges.value, chapterMentions.value).prompt + "\n完整正文：\n${chapter.content}"
+        generationJobs[GenerationTask.EDITORIAL_REVIEW] = viewModelScope.launch {
+            try {
+                modelClient.editorialReview(reviewModelConfig(), context, request).fold(
+                    onSuccess = { review ->
+                        repository.addEditorialReview(project.id, chapter.id, review)
+                        message.value = "编辑审稿已保存"
+                    },
+                    onFailure = { message.value = it.message ?: "编辑审稿失败" },
+                )
+            } finally {
+                finishGeneration(GenerationTask.EDITORIAL_REVIEW, request)
+            }
+        }
+    }
+
+    private fun reviewModelConfig(): ModelConfig = modelConfig.value.let { config ->
+        if (config.reviewerBaseUrl.isBlank() || config.reviewerApiKey.isBlank() || config.reviewerModel.isBlank()) config
+        else config.copy(baseUrl = config.reviewerBaseUrl, apiKey = config.reviewerApiKey, model = config.reviewerModel)
+    }
+
     fun generateLongFormBlueprint() {
         val project = selectedProject.value ?: return
         val request = beginGeneration(GenerationTask.LONG_FORM_BLUEPRINT) ?: return
@@ -565,7 +651,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                 runCatching { MemoryExtractionParser.parse(raw) }.fold(
                     onSuccess = { extraction ->
                         val memoryMessage = applyMemoryExtraction(chapter, extraction)
-                        val warnings = QualityGate.inspect(chapter, storyItems.value, anchors.value)
+                        val warnings = QualityGate.inspect(chapter, storyItems.value, anchors.value, selectedProject.value)
                             .filter { it.severity == QualitySeverity.WARNING }
                         if (warnings.isEmpty()) {
                             repository.updateChapterLifecycle(
@@ -678,7 +764,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     fun generateRepairPlan() {
         val project = selectedProject.value ?: return
         val chapter = selectedChapter.value ?: return
-        val issues = QualityGate.inspect(chapter, storyItems.value, anchors.value)
+        val issues = QualityGate.inspect(chapter, storyItems.value, anchors.value, project)
         val request = beginGeneration(GenerationTask.REPAIR_PLAN) ?: return
         message.value = "正在生成最短修复计划..."
         val context = buildString {
@@ -994,7 +1080,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                     appendLine(source.content)
                     if (!humanize) {
                         appendLine("\n需要处理的门禁问题：")
-                        QualityGate.inspect(source, storyItems.value, anchors.value).forEach { appendLine("- ${it.title}：${it.detail}") }
+                        QualityGate.inspect(source, storyItems.value, anchors.value, project).forEach { appendLine("- ${it.title}：${it.detail}") }
                     }
                 }
                 val result = if (humanize) modelClient.humanizeChapter(modelConfig.value, context, request)

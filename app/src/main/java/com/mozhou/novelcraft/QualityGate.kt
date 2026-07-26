@@ -11,7 +11,7 @@ data class QualityIssue(
 object QualityGate {
     private val placeholders = listOf("TODO", "待补", "待写", "此处补充", "XXX")
 
-    fun inspect(chapter: Chapter?, storyItems: List<StoryItem>, anchors: List<StoryAnchor> = emptyList()): List<QualityIssue> {
+    fun inspect(chapter: Chapter?, storyItems: List<StoryItem>, anchors: List<StoryAnchor> = emptyList(), project: NovelProject? = null): List<QualityIssue> {
         if (chapter == null) return listOf(QualityIssue(QualitySeverity.WARNING, "尚未选择章节", "请选择一个章节后再检查。"))
         val content = chapter.content.trim()
         val visibleCount = content.count { !it.isWhitespace() }
@@ -40,6 +40,7 @@ object QualityGate {
         if (content.isNotBlank() && content.takeLast(140).count { it in "。！？!?" } < 1) {
             issues += QualityIssue(QualitySeverity.INFO, "结尾钩子可再明确", "结尾没有完整收束句，确认是否需要留下下一章的动作或悬念。")
         }
+        issues += PacingGuard.inspect(project, chapter)
         if (issues.isEmpty()) issues += QualityIssue(QualitySeverity.INFO, "本地检查通过", "未发现篇幅、占位符、重复段落或保密设定风险。")
         return issues
     }

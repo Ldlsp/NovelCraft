@@ -17,6 +17,9 @@ data class ModelConfig(
     val imageBaseUrl: String = "",
     val imageApiKey: String = "",
     val imageModel: String = "",
+    val reviewerBaseUrl: String = "",
+    val reviewerApiKey: String = "",
+    val reviewerModel: String = "",
 )
 
 class ModelPreferences(context: Context) {
@@ -39,6 +42,9 @@ class ModelPreferences(context: Context) {
         imageBaseUrl = preferences.getString("image_base_url", "").orEmpty(),
         imageApiKey = preferences.getString("image_api_key", "").orEmpty(),
         imageModel = preferences.getString("image_model", "").orEmpty(),
+        reviewerBaseUrl = preferences.getString("reviewer_base_url", "").orEmpty(),
+        reviewerApiKey = preferences.getString("reviewer_api_key", "").orEmpty(),
+        reviewerModel = preferences.getString("reviewer_model", "").orEmpty(),
     )
 
     fun save(config: ModelConfig) {
@@ -50,6 +56,9 @@ class ModelPreferences(context: Context) {
             .putString("image_base_url", config.imageBaseUrl.trim().trimEnd('/'))
             .putString("image_api_key", config.imageApiKey.trim())
             .putString("image_model", config.imageModel.trim())
+            .putString("reviewer_base_url", config.reviewerBaseUrl.trim().trimEnd('/'))
+            .putString("reviewer_api_key", config.reviewerApiKey.trim())
+            .putString("reviewer_model", config.reviewerModel.trim())
             .apply()
     }
 }
@@ -137,6 +146,22 @@ class OpenAiCompatibleClient {
         context = context,
         temperature = 0.65,
         systemInstruction = "你是中文网文语言编辑。仅润色用户给出的当前章节：删减机械重复、概念复述和模板化转折，使动作、感官细节和人物语气更自然；不得改变剧情事件、人物关系、伏笔状态、叙事视角或字数规模。只输出完整正文，不要标题、说明、Markdown 或分析。",
+        request = request,
+    )
+
+    suspend fun editorialReview(config: ModelConfig, context: String, request: GenerationRequest? = null): Result<String> = chat(
+        config = config,
+        context = context,
+        temperature = 0.25,
+        systemInstruction = "你是中文网文责任编辑。审阅给出的单章正文与设定，只报告可验证的问题：剧情连续性、人物动机、时间线、伏笔、节奏、语言重复。按 P0/P1/P2 分级；每条指出依据和最小修改建议。不要重写正文，不要虚构正文外事实。",
+        request = request,
+    )
+
+    suspend fun analyzeReferenceStructure(config: ModelConfig, context: String, request: GenerationRequest? = null): Result<String> = chat(
+        config = config,
+        context = context,
+        temperature = 0.2,
+        systemInstruction = "你是网文结构编辑。仅根据作者提供的非受版权保护摘要、标签和观察，提炼可迁移的抽象结构：开局承诺、冲突升级、信息揭示节奏、章末钩子、爽点类型和风险提示。不得复述、续写或模仿任何受版权保护作品，不得生成原作人物、情节、句子或可识别片段。",
         request = request,
     )
 

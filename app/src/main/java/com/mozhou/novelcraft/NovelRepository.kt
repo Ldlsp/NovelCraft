@@ -14,6 +14,8 @@ class NovelRepository(private val database: NovelDatabase) {
     fun resumableAutoWriteRun(projectId: Long): Flow<AutoWriteRun?> = database.autoWriteRunDao().observeResumable(projectId)
     fun storyItems(projectId: Long): Flow<List<StoryItem>> = database.storyItemDao().observeByProject(projectId)
     fun chapterMentions(projectId: Long): Flow<List<ChapterStoryMention>> = database.chapterStoryMentionDao().observeByProject(projectId)
+    fun researchNotes(projectId: Long): Flow<List<ResearchNote>> = database.researchNoteDao().observeByProject(projectId)
+    fun latestEditorialReview(chapterId: Long): Flow<EditorialReview?> = database.editorialReviewDao().observeLatest(chapterId)
     fun anchors(projectId: Long): Flow<List<StoryAnchor>> = database.storyAnchorDao().observeByProject(projectId)
     fun edges(projectId: Long): Flow<List<StoryEdge>> = database.storyEdgeDao().observeByProject(projectId)
 
@@ -54,6 +56,17 @@ class NovelRepository(private val database: NovelDatabase) {
 
     suspend fun updateLongFormBlueprint(project: NovelProject, blueprint: String) {
         database.projectDao().update(project.copy(longFormBlueprint = blueprint.trim(), updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun updatePacing(project: NovelProject, targetChapters: Int, targetWords: Int, profile: String) {
+        database.projectDao().update(
+            project.copy(
+                targetChapterCount = targetChapters.coerceAtLeast(0),
+                targetWordCount = targetWords.coerceAtLeast(0),
+                pacingProfile = profile.trim().ifBlank { "均衡" },
+                updatedAt = System.currentTimeMillis(),
+            ),
+        )
     }
 
     suspend fun updateProjectProfile(
@@ -290,6 +303,20 @@ class NovelRepository(private val database: NovelDatabase) {
                 ChapterStoryMention(projectId = chapter.projectId, chapterId = chapter.id, storyItemId = itemId)
             },
         )
+    }
+
+    suspend fun addResearchNote(projectId: Long, title: String, sourceUrl: String, tags: String, content: String) {
+        database.researchNoteDao().insert(ResearchNote(projectId = projectId, title = title.trim(), sourceUrl = sourceUrl.trim(), tags = tags.trim(), content = content.trim()))
+    }
+
+    suspend fun updateResearchNote(note: ResearchNote, title: String, sourceUrl: String, tags: String, content: String) {
+        database.researchNoteDao().update(note.copy(title = title.trim(), sourceUrl = sourceUrl.trim(), tags = tags.trim(), content = content.trim(), updatedAt = System.currentTimeMillis()))
+    }
+
+    suspend fun deleteResearchNote(noteId: Long) = database.researchNoteDao().deleteById(noteId)
+
+    suspend fun addEditorialReview(projectId: Long, chapterId: Long, content: String) {
+        database.editorialReviewDao().insert(EditorialReview(projectId = projectId, chapterId = chapterId, content = content.trim()))
     }
 
     suspend fun updateStoryItem(item: StoryItem, kind: String, name: String, detail: String, status: String) {
