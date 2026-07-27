@@ -106,7 +106,7 @@ Do not commit API keys, signing certificates, `local.properties`, `keystore.prop
 
 ## Release
 
-`v0.22.6` is the initial public GitHub release target. When a maintainer pushes a `v0.22.6`-style tag, GitHub Actions runs the tests, builds a release APK, and creates the GitHub Release. Signing keys are provided only through GitHub Actions Secrets. See the [release notes](docs/releases/v0.22.6.md) for setup.
+`v0.22.6` is the initial public GitHub release. When a maintainer pushes a `v0.22.6`-style tag, GitHub Actions runs the tests, builds a debug APK, and creates the GitHub Release. This package is intended for testing; future production signing can be configured through GitHub Actions Secrets. See the [release notes](docs/releases/v0.22.6.md) for details.
 
 ## Roadmap
 

@@ -108,7 +108,7 @@ NovelRepository + Room / SQLite
 
 ## 发行
 
-`v0.22.6` 是首个 GitHub 公开发行目标。维护者创建 `v0.22.6` 形式的标签后，GitHub Actions 会运行测试、构建 release APK 并创建 GitHub Release。签名密钥只通过 GitHub Actions Secrets 提供，详细配置见 [发行说明](docs/releases/v0.22.6.md)。
+`v0.22.6` 是首个 GitHub 公开发行版本。维护者创建 `v0.22.6` 形式的标签后，GitHub Actions 会运行测试、构建 debug APK 并创建 GitHub Release。该发行包用于测试；后续正式签名发行可通过 GitHub Actions Secrets 配置，详细说明见 [发行说明](docs/releases/v0.22.6.md)。
 
 ## 路线图
 
