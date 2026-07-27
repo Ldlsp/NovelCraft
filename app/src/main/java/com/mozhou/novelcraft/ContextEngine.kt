@@ -5,6 +5,7 @@ data class ContextPacket(
     val relevantEdges: List<StoryEdge> = emptyList(),
     val relevantChapters: List<Chapter> = emptyList(),
     val relevantResearch: List<ResearchNote> = emptyList(),
+    val relevantChunks: List<RagChunk> = emptyList(),
     val activeAnchor: StoryAnchor? = null,
     val prompt: String = "",
 )
@@ -25,6 +26,7 @@ object ContextEngine {
         edges: List<StoryEdge> = emptyList(),
         mentions: List<ChapterStoryMention> = emptyList(),
         researchNotes: List<ResearchNote> = emptyList(),
+        ragChunks: List<RagChunk> = emptyList(),
     ): ContextPacket {
         val query = listOf(project.title, project.premise, current.title, current.content.takeLast(1_600)).joinToString("\n")
         val queryTerms = terms(query)
@@ -40,7 +42,10 @@ object ContextEngine {
             .filter { it.storyItemId in relevantItems.map { item -> item.id }.toSet() }
             .map { it.chapterId }
             .toSet()
-        val retrievedChapters = chapters
+        val immediatePrevious = chapters
+            .filter { it.number < current.number && it.content.isNotBlank() }
+            .maxByOrNull { it.number }
+        val rankedChapters = chapters
             .filter { it.id != current.id && it.content.isNotBlank() }
             .map { chapter ->
                 val mentionBonus = if (chapter.id in mentionChapterIds) 40 else 0
@@ -51,6 +56,10 @@ object ContextEngine {
             .take(2)
             .map { it.first }
             .ifEmpty { chapters.filter { it.number < current.number && it.content.isNotBlank() }.takeLast(2) }
+        // The direct predecessor is non-negotiable continuity context, even when term ranking favors older lore.
+        val retrievedChapters = (listOfNotNull(immediatePrevious) + rankedChapters)
+            .distinctBy { it.id }
+            .take(3)
 
         val anchor = anchors.firstOrNull { current.number in it.startChapter..it.endChapter }
         val relevantResearch = researchNotes
@@ -59,6 +68,9 @@ object ContextEngine {
             .sortedByDescending { it.second }
             .take(4)
             .map { it.first }
+        val relevantChunks = ragChunks.filter { it.chapterId != current.id }.map { chunk ->
+            chunk to score(query, queryTerms, chunk.terms + "\n" + chunk.content) + if (chunk.chapterId in mentionChapterIds) 30 else 0
+        }.filter { it.second > 0 }.sortedByDescending { it.second }.take(4).map { it.first }
         val itemsById = storyItems.associateBy { it.id }
         val seedItemIds = relevantItems.map { it.id }.toSet()
         val relevantEdges = edges
@@ -67,7 +79,7 @@ object ContextEngine {
         val edgeItemIds = relevantEdges.flatMap { listOf(it.sourceItemId, it.targetItemId) }.toSet()
         val packetItems = (relevantItems + edgeItemIds.mapNotNull(itemsById::get))
             .distinctBy { it.id }
-        val packet = ContextPacket(packetItems, relevantEdges, retrievedChapters, relevantResearch, anchor)
+        val packet = ContextPacket(packetItems, relevantEdges, retrievedChapters, relevantResearch, relevantChunks, anchor)
         return packet.copy(prompt = buildPrompt(project, current, packet))
     }
 
@@ -109,11 +121,15 @@ object ContextEngine {
                 appendLine("- 第${it.number}章 ${it.title}：${it.content.takeLast(500)}")
             }
         }
+        if (packet.relevantChunks.isNotEmpty()) {
+            appendLine("长期索引命中片段（按相关度排序）：")
+            packet.relevantChunks.forEach { appendLine("- 第${it.chapterNumber}章片段：${it.content.take(500)}") }
+        }
         if (packet.relevantResearch.isNotEmpty()) {
             appendLine("相关调研事实（仅作创作背景，不得编造来源外信息）：")
             packet.relevantResearch.forEach { note -> appendLine("- ${note.title}：${note.content.take(700)}") }
         }
-        appendLine("续写要求：延续当前叙事视角和时态；先推进一个可见动作；不要复述设定；不提前揭露未解谜底；结尾保留具体、可继续写的钩子。")
+        appendLine("续写要求：必须使用第三人称叙事；严禁使用“我”作为叙述主语；保持时态一致；先推进一个可见动作；不要复述设定；不提前揭露未解谜底；结尾保留具体、可继续写的钩子。")
     }
 
     private fun score(query: String, queryTerms: Set<String>, candidate: String): Int {

@@ -15,9 +15,12 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.Dispatchers
 import java.io.File
 
 private data class WritingContextInput(
@@ -29,12 +32,23 @@ private data class WritingContextInput(
 )
 
 data class ProjectProfileSuggestion(
+    val title: String,
     val genre: String,
     val premise: String,
     val summary: String,
     val tags: String,
     val targetAudience: String,
     val protagonistName: String,
+    val conflict: String,
+    val promise: String,
+    val writingStyle: String,
+    val forbiddenContent: String,
+)
+
+private data class MandatoryGateResult(
+    val passed: Boolean,
+    val summary: String,
+    val reports: List<Pair<String, String>>,
 )
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -47,10 +61,13 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     private var savePlanJob: Job? = null
     private var saveBeatSheetJob: Job? = null
     private var saveStyleJob: Job? = null
+    private var onlineResearchJob: Job? = null
     private var autoWritePreparing = false
     private val generationJobs = mutableMapOf<GenerationTask, Job>()
     private val generationRequests = mutableMapOf<GenerationTask, GenerationRequest>()
     private val pendingChapterContent = mutableMapOf<Long, String>()
+    private var lifecycleQueueRunner: Job? = null
+    private var activeLifecycleJob: ChapterLifecycleJob? = null
 
     val projects = repository.projects().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val selectedProjectId = MutableStateFlow<Long?>(null)
@@ -58,6 +75,10 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
 
     val selectedProject = selectedProjectId.flatMapLatest { id ->
         if (id == null) flowOf(null) else repository.project(id)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val importAnalysis = selectedProjectId.flatMapLatest { id ->
+        if (id == null) flowOf(null) else repository.importAnalysis(id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     val chapters = selectedProjectId.flatMapLatest { id ->
@@ -75,6 +96,8 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     val researchNotes = selectedProjectId.flatMapLatest { id ->
         if (id == null) flowOf(emptyList()) else repository.researchNotes(id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val onlineResearchResults = MutableStateFlow<List<OnlineResearchResult>>(emptyList())
+    val isOnlineResearching = MutableStateFlow(false)
 
     val anchors = selectedProjectId.flatMapLatest { id ->
         if (id == null) flowOf(emptyList()) else repository.anchors(id)
@@ -83,6 +106,19 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     val edges = selectedProjectId.flatMapLatest { id ->
         if (id == null) flowOf(emptyList()) else repository.edges(id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val ideationDraft = repository.ideationDraft().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val styleProfiles = repository.styleProfiles().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val pacingEvents = selectedProjectId.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repository.pacingEvents(id) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val eventMatrixRules = selectedProjectId.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repository.eventMatrixRules(id) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val batchReviewRuns = selectedProjectId.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repository.batchReviewRuns(id) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val reviewIssues = selectedProjectId.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repository.reviewIssues(id) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    val ragChunks = selectedProjectId.flatMapLatest { id -> if (id == null) flowOf(emptyList()) else repository.ragChunks(id) }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val selectedChapter = combine(chapters, selectedChapterId) { all, id ->
         all.firstOrNull { it.id == id } ?: all.firstOrNull()
@@ -96,6 +132,10 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         if (chapter == null) flowOf(null) else repository.latestEditorialReview(chapter.id)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
+    val gateReports = selectedChapter.flatMapLatest { chapter ->
+        if (chapter == null) flowOf(emptyList()) else repository.gateReports(chapter.id)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val resumableAutoWriteRun = selectedProjectId.flatMapLatest { projectId ->
         if (projectId == null) flowOf(null) else repository.resumableAutoWriteRun(projectId)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
@@ -104,12 +144,18 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         WritingContextInput(project, chapter, allChapters, items, projectAnchors)
     }
 
-    val contextPacket = combine(writingContextInput, edges, chapterMentions, researchNotes) { input, graphEdges, mentions, notes ->
-        if (input.project == null || input.chapter == null) ContextPacket() else ContextEngine.build(input.project, input.chapter, input.chapters, input.items, input.anchors, graphEdges, mentions, notes)
+    val contextPacket = combine(writingContextInput, edges, chapterMentions, researchNotes, ragChunks) { input, graphEdges, mentions, notes, chunks ->
+        if (input.project == null || input.chapter == null) ContextPacket() else ContextEngine.build(input.project, input.chapter, input.chapters, input.items, input.anchors, graphEdges, mentions, notes, chunks)
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ContextPacket())
 
-    val qualityIssues = combine(selectedProject, selectedChapter, storyItems, anchors) { project, chapter, items, projectAnchors ->
-        QualityGate.inspect(chapter, items, projectAnchors, project)
+    val qualityIssues = combine(listOf(selectedProject, selectedChapter, storyItems, anchors, pacingEvents, eventMatrixRules)) { values ->
+        val project = values[0] as NovelProject?
+        val chapter = values[1] as Chapter?
+        @Suppress("UNCHECKED_CAST") val items = values[2] as List<StoryItem>
+        @Suppress("UNCHECKED_CAST") val projectAnchors = values[3] as List<StoryAnchor>
+        @Suppress("UNCHECKED_CAST") val events = values[4] as List<ChapterPacingEvent>
+        @Suppress("UNCHECKED_CAST") val rules = values[5] as List<EventMatrixRule>
+        QualityGate.inspect(chapter, items, projectAnchors, project) + if (project != null && chapter != null) PacingPlanner.warnings(project, chapter, events, rules) else emptyList()
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val modelConfig = MutableStateFlow(modelPreferences.load())
@@ -117,25 +163,253 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
     val generationTasks = MutableStateFlow<Set<GenerationTask>>(emptySet())
     val repairPlan = MutableStateFlow<String?>(null)
     val projectProfileSuggestion = MutableStateFlow<ProjectProfileSuggestion?>(null)
+    val streamedContinuation = MutableStateFlow("")
     private val outlineCascadePending = MutableStateFlow(false)
 
     init {
-        viewModelScope.launch { repository.recoverInterruptedWritingState() }
+        viewModelScope.launch {
+            repository.recoverInterruptedWritingState()
+            processLifecycleQueue()
+        }
+    }
+
+    fun saveIdeationDraft(draft: IdeationDraft) = viewModelScope.launch { repository.saveIdeationDraft(draft) }
+
+    fun finishIdeationDraft(draft: IdeationDraft): Boolean {
+        if (!modelConfig.value.hasTextGenerationConfiguration()) {
+            message.value = "请先到“我的”配置并保存文本创作模型，再新建作品"
+            return false
+        }
+        viewModelScope.launch {
+            val created = repository.finishIdeationDraft(draft)
+            selectProject(created.project.id)
+            selectChapter(created.openingChapter.id)
+            generateOpeningChapter(created)
+        }
+        return true
+    }
+
+    private fun generateOpeningChapter(created: CreatedProject) {
+        val config = modelConfig.value
+        if (!config.hasTextGenerationConfiguration()) {
+            message.value = "开书资料包与开篇草稿已创建；配置模型后可一键生成完整第一章"
+            return
+        }
+        val request = beginGeneration(GenerationTask.OPENING_CHAPTER) ?: return
+        message.value = "AI 正在生成第一章..."
+        generationJobs[GenerationTask.OPENING_CHAPTER] = viewModelScope.launch {
+            try {
+                val project = created.project
+                val context = buildString {
+                    appendLine("作品：${project.title}")
+                    appendLine("题材：${project.genre}")
+                    appendLine("核心设定：${project.premise}")
+                    appendLine("主角：${project.protagonistName}")
+                    appendLine("长期冲突：${project.longFormBlueprint.substringAfter("核心冲突：").substringBefore("\\n")}")
+                    appendLine("文风：${project.styleGuide}")
+                    appendLine("禁区：${project.forbiddenContent}")
+                    appendLine("叙事视角：必须使用第三人称叙事，严禁使用“我”作为叙述主语。")
+                    appendLine("现在写第一章。开头从主角的具体日常或迫在眉睫的异常切入，第一章内必须发生不可逆的第一次选择，结尾留下可继续追问的具体钩子；正文不得少于${MIN_GENERATED_CHAPTER_CHARS}个字符。")
+                }
+                streamedContinuation.value = ""
+                generateOpeningContent(config, context, request).fold(
+                    onSuccess = { content ->
+                        val fallbackTitle = "第1章：${project.protagonistName.ifBlank { "命运的裂缝" }}的选择"
+                        val title = modelClient.generateChapterTitle(config, content, request)
+                            .getOrDefault(fallbackTitle)
+                            .let { chapterTitleOrFallback(it, fallbackTitle) }
+                        val current = chapters.value.firstOrNull { it.id == created.openingChapter.id } ?: created.openingChapter
+                        val pendingContent = pendingChapterContent.remove(current.id)
+                        if (pendingContent != null) saveChapterJobs.remove(current.id)?.cancel()
+                        val savedContent = mergeOpeningChapterContent(
+                            openingDraft = created.openingChapter.content,
+                            currentContent = pendingContent ?: current.content,
+                            generatedContent = sanitizeNovelBody(content),
+                        )
+                        repository.updateChapter(current.copy(title = title), savedContent)
+                        streamedContinuation.value = ""
+                        message.value = "第一章已生成，可以直接续写"
+                    },
+                    onFailure = {
+                        streamedContinuation.value = ""
+                        message.value = "第一章未达到完整篇幅，已保留可继续写的开篇草稿：${it.message ?: "模型请求失败"}"
+                    },
+                )
+            } finally {
+                finishGeneration(GenerationTask.OPENING_CHAPTER, request)
+            }
+        }
+    }
+
+    private suspend fun generateOpeningContent(config: ModelConfig, context: String, request: GenerationRequest): Result<String> {
+        val firstPass = modelClient.writeFullChapter(config, context, request) { delta ->
+            streamedContinuation.value = sanitizeNovelBody(streamedContinuation.value + delta)
+        }
+        return firstPass.fold(
+            onSuccess = { content -> expandOpeningChapter(config, content, request) },
+            onFailure = { Result.failure(it) },
+        )
+    }
+
+    private suspend fun expandOpeningChapter(config: ModelConfig, opening: String, request: GenerationRequest): Result<String> {
+        var content = sanitizeNovelBody(opening)
+        repeat(MAX_OPENING_CHAPTER_GENERATION_ATTEMPTS - 1) {
+            if (!needsChapterExpansion(content)) return Result.success(content)
+            val remainingChars = MIN_GENERATED_CHAPTER_CHARS - content.length
+            streamedContinuation.value += "\n\n"
+            val continuation = modelClient.continueWriting(
+                config = config,
+                context = "以下是已生成的第一章正文。只从最后一句之后继续补写，不要重复、总结、改写或添加标题；至少补写${remainingChars}个中文字符，使整章总长度不少于${MIN_GENERATED_CHAPTER_CHARS}个字符。\n\n已生成正文：\n$content",
+                request = request,
+            ) { delta -> streamedContinuation.value = sanitizeNovelBody(streamedContinuation.value + delta) }.getOrElse { return Result.failure(it) }
+            content = sanitizeNovelBody(content.trimEnd() + "\n\n" + continuation)
+        }
+        return if (needsChapterExpansion(content)) {
+            Result.failure(IllegalStateException("模型在${MAX_OPENING_CHAPTER_GENERATION_ATTEMPTS}次生成后仍未达到${MIN_GENERATED_CHAPTER_CHARS}个字符"))
+        } else {
+            Result.success(content)
+        }
+    }
+
+    fun generateGuidedIdeation(seed: String, genre: String) {
+        val config = modelConfig.value
+        if (!config.hasTextGenerationConfiguration()) {
+            message.value = "请先到“我的”配置文本创作模型，再让 AI 整理开书资料"
+            return
+        }
+        val request = beginGeneration(GenerationTask.PROJECT_PROFILE) ?: return
+        message.value = "AI 正在整理开书资料..."
+        val prompt = buildString {
+            appendLine("作者目前只有一个模糊想法，请你主动补足完整开书资料。")
+            appendLine("灵感：${seed.trim().ifBlank { "请自由创作一个适合中文网文连载的故事" }}")
+            if (genre.isNotBlank()) appendLine("作者偏好的题材：${genre.trim()}")
+            appendLine("资料应有明确的主角起点、长期冲突和可持续悬念；不要反问作者。")
+        }
+        generationJobs[GenerationTask.PROJECT_PROFILE] = viewModelScope.launch {
+            try {
+                modelClient.generateProjectProfile(config, prompt, request).fold(
+                    onSuccess = { raw ->
+                        val profile = parseProjectProfile(raw)
+                        repository.saveIdeationDraft(
+                            IdeationDraft(
+                                title = profile.title,
+                                genre = profile.genre.ifBlank { genre },
+                                premise = profile.premise.ifBlank { seed.trim() },
+                                protagonist = profile.protagonistName,
+                                conflict = profile.conflict,
+                                promise = profile.promise.ifBlank { profile.summary },
+                                targetAudience = profile.targetAudience,
+                                writingStyle = profile.writingStyle,
+                                forbiddenContent = profile.forbiddenContent,
+                            ),
+                        )
+                        message.value = "AI 已整理好开书资料，确认后即可开始写作"
+                    },
+                    onFailure = { message.value = it.message ?: "AI 整理开书资料失败" },
+                )
+            } finally {
+                finishGeneration(GenerationTask.PROJECT_PROFILE, request)
+            }
+        }
+    }
+
+    fun savePacingEvent(eventType: String, pace: String, note: String) {
+        val chapter = selectedChapter.value ?: return
+        viewModelScope.launch {
+            repository.replaceChapterPacingEvent(chapter, eventType, pace, note)
+            message.value = "已登记本章节奏事件"
+        }
+    }
+
+    fun saveEventMatrixRule(rule: EventMatrixRule) = viewModelScope.launch {
+        repository.updateEventMatrixRule(rule)
+        message.value = "事件规则已更新"
+    }
+
+    fun addEventMatrixRule(label: String, cooldown: Int, category: String) {
+        val projectId = selectedProjectId.value ?: return
+        viewModelScope.launch {
+            if (label.isBlank()) { message.value = "请填写事件名称"; return@launch }
+            repository.addEventMatrixRule(projectId, label, cooldown, category)
+            message.value = "已添加事件规则"
+        }
+    }
+
+    fun deleteEventMatrixRule(rule: EventMatrixRule) = viewModelScope.launch {
+        repository.deleteEventMatrixRule(rule.id)
+        message.value = "已删除事件规则"
+    }
+
+    fun pacingRecommendation(): PacingRecommendation? = selectedProject.value?.let { project ->
+        PacingPlanner.recommend(project, pacingEvents.value, eventMatrixRules.value, selectedChapter.value?.number ?: (chapters.value.maxOfOrNull { it.number } ?: 0) + 1)
+    }
+
+    fun saveCurrentStyleProfile(name: String) {
+        val project = selectedProject.value ?: return
+        if (project.styleGuide.isBlank()) { message.value = "请先生成或填写当前作品文风"; return }
+        viewModelScope.launch {
+            val sample = selectedChapter.value?.content?.takeIf { it.isNotBlank() } ?: project.styleGuide
+            repository.saveStyleProfile(name, project.genre, project.styleGuide, project.id, StyleFingerprintAnalyzer.analyze(sample))
+            message.value = "文风档案已保存到跨作品文风库"
+        }
+    }
+
+    fun aiTraceReport(): AiTraceReport = AiTraceDetector.inspect(selectedChapter.value?.content.orEmpty())
+
+    fun researchPlan(): ResearchPlan? = selectedProject.value?.let { ResearchPlanner.build(it, researchNotes.value) }
+
+    fun applyStyleProfile(profile: StyleProfile) {
+        val project = selectedProject.value ?: return
+        viewModelScope.launch { repository.updateProjectStyle(project, profile.guide); message.value = "已应用文风档案：${profile.name}" }
+    }
+
+    fun deleteStyleProfile(profile: StyleProfile) = viewModelScope.launch { repository.deleteStyleProfile(profile.id) }
+
+    fun setReviewIssueResolved(issue: ReviewIssue, resolved: Boolean) = viewModelScope.launch { repository.setReviewIssueStatus(issue.id, resolved) }
+
+    fun exportProjectBackup(uri: Uri) {
+        val project = selectedProject.value ?: return
+        viewModelScope.launch {
+            runCatching {
+                val raw = ProjectBackupCodec.encode(repository.backupSnapshot(project.id))
+                getApplication<Application>().contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(raw) } ?: error("无法写入备份文件")
+            }.onSuccess { message.value = "完整项目备份已导出" }.onFailure { message.value = "备份失败：${it.message}" }
+        }
+    }
+
+    fun restoreProjectBackup(uri: Uri) {
+        viewModelScope.launch {
+            runCatching {
+                val raw = getApplication<Application>().contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() } ?: error("无法读取备份文件")
+                val snapshot = ProjectBackupCodec.decode(raw)
+                val projectId = repository.restoreSnapshot(snapshot)
+                ProjectBackupCodec.coverData(raw)?.let { bytes ->
+                    val file = File(getApplication<Application>().filesDir, "covers/restored-$projectId.jpg").apply { parentFile?.mkdirs(); writeBytes(bytes) }
+                    repository.updateCoverByProjectId(projectId, file.absolutePath)
+                }
+                projectId
+            }.onSuccess { projectId -> selectProject(projectId); message.value = "完整项目已恢复为新作品" }.onFailure { message.value = "恢复失败：${it.message}" }
+        }
     }
 
     private fun beginGeneration(task: GenerationTask): GenerationRequest? {
-        val activeTask = generationTasks.value.firstOrNull()
-        if (activeTask != null) {
-            message.value = "正在执行${activeTask.label}，请等待完成或先取消"
+        importAnalysis.value?.takeIf { it.status in setOf(ImportAnalysisStatus.QUEUED, ImportAnalysisStatus.RUNNING) }?.let { analysis ->
+            message.value = "导入分析正在${analysis.stage}，请等待完成或先在作品页取消"
             return null
         }
         if (task in generationTasks.value) {
             message.value = "${task.label}正在生成"
             return null
         }
+        val activeTask = generationTasks.value.firstOrNull { active -> !task.canRunAlongside(active) }
+        if (activeTask != null) {
+            message.value = "正在执行${activeTask.label}，请等待完成或先取消"
+            return null
+        }
         return GenerationRequest().also { request ->
             generationRequests[task] = request
             generationTasks.value = generationTasks.value + task
+            AiGenerationForegroundService.start(getApplication<Application>(), task.label)
         }
     }
 
@@ -144,12 +418,24 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         generationRequests.remove(task)
         generationJobs.remove(task)
         generationTasks.value = generationTasks.value - task
+        val activeTasks = generationTasks.value
+        if (shouldKeepGenerationForeground(activeTasks)) {
+            AiGenerationForegroundService.start(getApplication<Application>(), activeTasks.first().label)
+        } else {
+            AiGenerationForegroundService.stop(getApplication<Application>())
+        }
+        if (task != GenerationTask.CHAPTER_LIFECYCLE) processLifecycleQueue()
     }
 
     fun selectProject(projectId: Long) {
         selectedProjectId.value = projectId
         selectedChapterId.value = null
         projectProfileSuggestion.value = null
+        viewModelScope.launch {
+            repository.ensureEventMatrixRules(projectId)
+            delay(250)
+            processLifecycleQueue()
+        }
     }
 
     fun selectChapter(chapterId: Long) {
@@ -170,22 +456,94 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
 
     fun importDocument(uri: Uri) {
         viewModelScope.launch {
+            message.value = "正在导入正文并建立本地索引..."
             runCatching {
                 repository.importProject(
                     getApplication(),
                     uri,
                     uri.lastPathSegment?.substringAfterLast('/')?.substringBeforeLast('.') ?: "导入作品",
                 )
-            }.onSuccess {
-                selectProject(it)
-                message.value = "导入完成，可从第一章继续写"
+            }.onSuccess { imported ->
+                selectProject(imported.project.id)
+                autoFillImportedProject(imported)
             }.onFailure {
                 message.value = it.message ?: "导入失败"
             }
         }
     }
 
-    fun exportDocument(uri: Uri) {
+    /** Imports always index locally; cloud analysis continues through WorkManager when the app is backgrounded. */
+    private suspend fun autoFillImportedProject(imported: ImportedProject) {
+        val config = modelConfig.value
+        if (config.baseUrl.isBlank() || config.apiKey.isBlank() || config.model.isBlank()) {
+            repository.updateImportAnalysis(
+                imported.project.id,
+                ImportAnalysisStatus.WAITING_FOR_CONFIG,
+                "等待模型配置",
+                0,
+                "请在“我的”中完成云端文本模型配置后点击开始分析",
+            )
+            message.value = "已导入 ${imported.chapters.size} 章并建立本地索引；配置云端模型后可自动补全作品资料"
+            return
+        }
+        repository.updateImportAnalysis(
+            imported.project.id,
+            ImportAnalysisStatus.QUEUED,
+            "等待后台开始",
+            0,
+            "已建立本地索引，AI 将提炼作品资料和文风",
+        )
+        ImportAnalysisScheduler.enqueue(getApplication(), imported.project.id)
+        message.value = "已导入 ${imported.chapters.size} 章并建立本地索引；AI 分析已转入后台"
+    }
+
+    fun startImportAnalysis() {
+        val project = selectedProject.value ?: return
+        viewModelScope.launch {
+            val config = modelConfig.value
+            if (config.baseUrl.isBlank() || config.apiKey.isBlank() || config.model.isBlank()) {
+                repository.updateImportAnalysis(project.id, ImportAnalysisStatus.WAITING_FOR_CONFIG, "等待模型配置", 0, "请在“我的”中完成云端文本模型配置")
+                message.value = "请先在“我的”配置云端文本模型"
+                return@launch
+            }
+            repository.updateImportAnalysis(project.id, ImportAnalysisStatus.QUEUED, "等待后台开始", 0, "AI 将提炼作品资料和文风")
+            ImportAnalysisScheduler.enqueue(getApplication(), project.id)
+            message.value = "导入分析已加入后台队列"
+        }
+    }
+
+    fun cancelImportAnalysis() {
+        val project = selectedProject.value ?: return
+        viewModelScope.launch {
+            ImportAnalysisScheduler.cancel(getApplication(), project.id)
+            repository.updateImportAnalysis(project.id, ImportAnalysisStatus.CANCELLED, "已取消", 0, "导入分析已取消，可随时重新开始")
+            message.value = "已取消后台导入分析"
+        }
+    }
+
+    private fun parseProjectProfile(raw: String): ProjectProfileSuggestion {
+        val json = org.json.JSONObject(raw.trim().removePrefix("```json").removeSuffix("```").trim())
+        return ProjectProfileSuggestion(
+            title = json.optString("title").trim(),
+            genre = json.optString("genre").trim(),
+            premise = json.optString("premise").trim(),
+            summary = json.optString("summary").trim(),
+            tags = json.optString("tags").trim(),
+            targetAudience = json.optString("targetAudience").trim(),
+            protagonistName = json.optString("protagonistName").trim(),
+            conflict = json.optString("conflict").trim(),
+            promise = json.optString("promise").trim(),
+            writingStyle = json.optString("writingStyle").trim(),
+            forbiddenContent = json.optString("forbiddenContent").trim(),
+        )
+    }
+
+    fun exportDocument(uri: Uri) = exportProject(uri, ExportFormat.MARKDOWN)
+    fun exportDocx(uri: Uri) = exportProject(uri, ExportFormat.DOCX)
+    fun exportEpub(uri: Uri) = exportProject(uri, ExportFormat.EPUB)
+    fun exportPdf(uri: Uri) = exportProject(uri, ExportFormat.PDF)
+
+    private fun exportProject(uri: Uri, format: ExportFormat) {
         val project = selectedProject.value ?: run {
             message.value = "请先选择要导出的作品"
             return
@@ -193,29 +551,20 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val chaptersToExport = chapters.value
         val itemsToExport = storyItems.value
         val edgesToExport = edges.value
+        val notesToExport = researchNotes.value
         viewModelScope.launch {
             runCatching {
-                val markdown = buildString {
-                    appendLine("# ${project.title}")
-                    if (project.genre.isNotBlank()) appendLine("题材：${project.genre}")
-                    if (project.premise.isNotBlank()) appendLine("设定：${project.premise}")
-                    appendLine()
-                    chaptersToExport.forEach { chapter ->
-                        appendLine("## 第${chapter.number}章 ${chapter.title}")
-                        appendLine()
-                        appendLine(chapter.content.trim())
-                        appendLine()
+                getApplication<Application>().contentResolver.openOutputStream(uri)?.use { output ->
+                    when (format) {
+                        ExportFormat.MARKDOWN -> output.bufferedWriter().use { it.write(DocumentExport.markdown(project, chaptersToExport, itemsToExport, edgesToExport, notesToExport)) }
+                        ExportFormat.DOCX -> DocumentExport.writeDocx(output, project, chaptersToExport, notesToExport)
+                        ExportFormat.EPUB -> DocumentExport.writeEpub(output, project, chaptersToExport, notesToExport)
+                        ExportFormat.PDF -> DocumentExport.writePdf(output, project, chaptersToExport, notesToExport)
                     }
-                    appendLine("## 知识图谱")
-                    appendLine()
-                    appendLine("```mermaid")
-                    appendLine(StoryGraphExport.asMermaid(itemsToExport, edgesToExport))
-                    appendLine("```")
                 }
-                getApplication<Application>().contentResolver.openOutputStream(uri)?.bufferedWriter()?.use { it.write(markdown) }
                     ?: error("无法创建导出文件")
             }.onSuccess {
-                message.value = "已导出《${project.title}》"
+                message.value = "已导出${format.label}：${project.title}"
             }.onFailure {
                 message.value = it.message ?: "导出失败"
             }
@@ -244,11 +593,40 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun addChapter() {
+    fun addChapter(action: NextChapterAction) {
         val projectId = selectedProjectId.value ?: return
+        val current = selectedChapter.value
         viewModelScope.launch {
-            selectedChapterId.value = repository.addChapter(projectId)
-            message.value = "已新建章节"
+            val previous = current?.let { chapter ->
+                val pending = pendingChapterContent.remove(chapter.id)
+                if (pending == null) chapter else {
+                    saveChapterJobs.remove(chapter.id)?.cancel()
+                    repository.updateChapter(chapter, pending)
+                    chapter.copy(content = pending)
+                }
+            }
+            if (previous == null || previous.content.isBlank()) {
+                message.value = "请先完成当前章节正文，再新建下一章"
+                return@launch
+            }
+            when (chapterAdvanceMode(previous.lifecycleStatus)) {
+                ChapterAdvanceMode.WAIT_FOR_SUCCESS -> {
+                    if (previous.lifecycleStatus == ChapterLifecycleStatus.PASSED) {
+                        val nextChapterId = repository.addChapter(projectId)
+                        selectedChapterId.value = nextChapterId
+                        val nextChapter = repository.chapterById(nextChapterId) ?: return@launch
+                        if (action == NextChapterAction.GENERATE_WITH_AI) {
+                            startContinuation(project = selectedProject.value ?: return@launch, chapter = nextChapter, direction = "")
+                        } else {
+                            message.value = "已新建第${nextChapter.number}章"
+                        }
+                    } else {
+                        repository.enqueueChapterLifecycle(previous, action)
+                        processLifecycleQueue()
+                        message.value = "第${previous.number}章正在闭环；通过后将${if (action == NextChapterAction.GENERATE_WITH_AI) "创建并生成" else "创建"}下一章"
+                    }
+                }
+            }
         }
     }
 
@@ -317,6 +695,14 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun saveWritingPolicy(forbiddenContent: String, automationLevel: String, targetChapterWordCountMin: Int, targetChapterWordCountMax: Int) {
+        val project = selectedProject.value ?: return
+        viewModelScope.launch {
+            repository.updateWritingPolicy(project, forbiddenContent, automationLevel, targetChapterWordCountMin, targetChapterWordCountMax)
+            message.value = "创作策略已保存并将用于后续生成"
+        }
+    }
+
     fun generateCover() {
         val project = selectedProject.value ?: return
         val request = beginGeneration(GenerationTask.COVER) ?: return
@@ -353,26 +739,33 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val project = selectedProject.value ?: return
         viewModelScope.launch {
             runCatching {
-                val resolver = getApplication<Application>().contentResolver
-                val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
-                resolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it, null, options) }
-                    ?: error("无法读取选择的图片")
-                require(options.outWidth > 0 && options.outHeight > 0) { "请选择有效的图片文件" }
-                val extension = when (resolver.getType(uri)) {
-                    "image/jpeg" -> "jpg"
-                    "image/webp" -> "webp"
-                    else -> "png"
+                withContext(Dispatchers.IO) {
+                    val resolver = getApplication<Application>().contentResolver
+                    val folder = File(getApplication<Application>().filesDir, "covers").apply { mkdirs() }
+                    val temporary = File.createTempFile("cover-${project.id}-", ".upload", folder)
+                    try {
+                        CoverFileTransfer.copyToTemporaryFile(temporary) { resolver.openInputStream(uri) }
+                        val options = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        android.graphics.BitmapFactory.decodeFile(temporary.absolutePath, options)
+                        require(options.outWidth > 0 && options.outHeight > 0) { "请选择有效的图片文件" }
+                        val extension = when (resolver.getType(uri)) {
+                            "image/jpeg" -> "jpg"
+                            "image/webp" -> "webp"
+                            "image/heic", "image/heif" -> "heic"
+                            "image/avif" -> "avif"
+                            else -> "png"
+                        }
+                        val destination = File(folder, "cover-${project.id}.$extension")
+                        temporary.copyTo(destination, overwrite = true)
+                        repository.updateCover(project, destination.absolutePath)
+                    } finally {
+                        temporary.delete()
+                    }
                 }
-                val folder = File(getApplication<Application>().filesDir, "covers").apply { mkdirs() }
-                val destination = File(folder, "cover-${project.id}.$extension")
-                resolver.openInputStream(uri)?.use { input ->
-                    destination.outputStream().use(input::copyTo)
-                } ?: error("无法复制选择的图片")
-                repository.updateCover(project, destination.absolutePath)
             }.onSuccess {
                 message.value = "已使用本地图片作为书架封面"
             }.onFailure {
-                message.value = it.message ?: "上传封面失败"
+                message.value = "封面导入失败：${it.message ?: it.javaClass.simpleName}"
             }
         }
     }
@@ -404,15 +797,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
             try {
                 modelClient.generateProjectProfile(modelConfig.value, context, request).fold(
                     onSuccess = { raw ->
-                        val json = org.json.JSONObject(raw.trim().removePrefix("```json").removeSuffix("```").trim())
-                        projectProfileSuggestion.value = ProjectProfileSuggestion(
-                            genre = json.optString("genre").trim(),
-                            premise = json.optString("premise").trim(),
-                            summary = json.optString("summary").trim(),
-                            tags = json.optString("tags").trim(),
-                            targetAudience = json.optString("targetAudience").trim(),
-                            protagonistName = json.optString("protagonistName").trim(),
-                        )
+                        projectProfileSuggestion.value = parseProjectProfile(raw)
                         message.value = "作品设定已生成，请确认后保存"
                     },
                     onFailure = { message.value = it.message ?: "生成作品设定失败" },
@@ -459,6 +844,35 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch { repository.deleteResearchNote(note.id) }
     }
 
+    fun searchOnlineResearch(query: String) {
+        if (isOnlineResearching.value) return
+        onlineResearchJob?.cancel()
+        onlineResearchJob = viewModelScope.launch {
+            isOnlineResearching.value = true
+            message.value = "正在检索公开资料..."
+            runCatching { OnlineResearchClient.search(query) }
+                .onSuccess { results ->
+                    onlineResearchResults.value = results
+                    message.value = if (results.isEmpty()) "没有找到公开资料，请换一个更具体的关键词" else "找到 ${results.size} 条可引用公开资料"
+                }
+                .onFailure { message.value = it.message ?: "联网调研失败，请检查网络后重试" }
+            isOnlineResearching.value = false
+        }
+    }
+
+    fun clearOnlineResearchResults() {
+        onlineResearchResults.value = emptyList()
+    }
+
+    fun collectOnlineResearch(result: OnlineResearchResult) {
+        val projectId = selectedProjectId.value ?: return
+        viewModelScope.launch {
+            val content = "公开资料摘要：${result.excerpt}\n\n引用：${result.sourceLabel}\n检索时间：${result.retrievedAt}\n原始链接：${result.sourceUrl}"
+            repository.addResearchNote(projectId, result.title, result.sourceUrl, "联网调研, 可追溯引用", content, true)
+            message.value = "已收录资料并保留引用链接"
+        }
+    }
+
     fun analyzeReferenceStructure(note: ResearchNote) {
         if (!note.rightsConfirmed) {
             message.value = "请先确认笔记为自写摘要或你拥有处理授权，不能分析受保护正文"
@@ -500,7 +914,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
         val request = beginGeneration(GenerationTask.EDITORIAL_REVIEW) ?: return
         message.value = "正在进行编辑审稿..."
-        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, edges.value, chapterMentions.value, researchNotes.value).prompt + "\n完整正文：\n${chapter.content}"
+        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, edges.value, chapterMentions.value, researchNotes.value, ragChunks.value).prompt + "\n完整正文：\n${chapter.content}"
         generationJobs[GenerationTask.EDITORIAL_REVIEW] = viewModelScope.launch {
             try {
                 modelClient.editorialReview(reviewModelConfig(), context, request).fold(
@@ -516,9 +930,75 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun runEditorialTeamReview() {
+        val project = selectedProject.value ?: return
+        val chapter = selectedChapter.value ?: return
+        if (chapter.content.isBlank()) { message.value = "本章还没有正文，无法启动编辑团队"; return }
+        val request = beginGeneration(GenerationTask.EDITORIAL_TEAM) ?: return
+        message.value = "编辑团队正在依次核查策划、角色与文字..."
+        val context = ContextEngine.build(
+            project, chapter, chapters.value, storyItems.value, anchors.value, edges.value,
+            chapterMentions.value, researchNotes.value, ragChunks.value,
+        ).prompt + "\n完整正文：\n${chapter.content}"
+        generationJobs[GenerationTask.EDITORIAL_TEAM] = viewModelScope.launch {
+            try {
+                val reviewer = reviewModelConfig()
+                val reports = buildList {
+                    modelClient.generateChapterPlan(reviewer, context, request).fold(
+                        onSuccess = { add("【总策划】\n$it") },
+                        onFailure = { add("【总策划】运行失败：${it.message}") },
+                    )
+                    modelClient.characterConsistencyReview(reviewer, context, request).fold(
+                        onSuccess = { add("【角色校对】\n$it") },
+                        onFailure = { add("【角色校对】运行失败：${it.message}") },
+                    )
+                    modelClient.copyeditReview(reviewer, context + "\n请作为文字编辑给出审校结论。", request).fold(
+                        onSuccess = { add("【文字编辑】\n$it") },
+                        onFailure = { add("【文字编辑】运行失败：${it.message}") },
+                    )
+                }
+                repository.addEditorialReview(project.id, chapter.id, reports.joinToString("\n\n"))
+                message.value = "编辑团队审稿已保存，不会自动修改正文"
+            } finally {
+                finishGeneration(GenerationTask.EDITORIAL_TEAM, request)
+            }
+        }
+    }
+
+    fun generateBatchEditorialReview(startChapter: Int, endChapter: Int) {
+        val project = selectedProject.value ?: return
+        val selected = chapters.value.filter { it.number in startChapter..endChapter && it.content.isNotBlank() }
+        if (selected.isEmpty()) { message.value = "所选范围没有可审稿的正文"; return }
+        val reviewerValues = listOf(modelConfig.value.reviewerBaseUrl, modelConfig.value.reviewerApiKey, modelConfig.value.reviewerModel)
+        if (reviewerValues.any(String::isBlank) && reviewerValues.any(String::isNotBlank)) { message.value = "独立审稿模型需完整配置或全部留空"; return }
+        val request = beginGeneration(GenerationTask.BATCH_REVIEW) ?: return
+        message.value = "正在批量审稿第${selected.first().number}-${selected.last().number}章..."
+        generationJobs[GenerationTask.BATCH_REVIEW] = viewModelScope.launch {
+            try {
+                val body = selected.joinToString("\n\n") { "【第${it.number}章 ${it.title}】\n${it.content.take(8_000)}" }
+                val context = "你是网文责编。跨章节审稿后，逐行输出问题，格式必须为：[P0|P1|P2][第N章或全局] 问题摘要。P0为矛盾/泄露，P1为节奏/角色，P2为措辞/可选优化；没有问题也要明确写无。\n\n$body"
+                modelClient.editorialReview(reviewModelConfig(), context, request).fold(
+                    onSuccess = { report ->
+                        val nextRound = (batchReviewRuns.value.maxOfOrNull { it.round } ?: 0) + 1
+                        repository.addBatchReview(project.id, selected.first().number, selected.last().number, nextRound, report, parseReviewIssues(report))
+                        message.value = "批量审稿已完成，问题已进入审核台账"
+                    },
+                    onFailure = { message.value = it.message ?: "批量审稿失败" },
+                )
+            } finally { finishGeneration(GenerationTask.BATCH_REVIEW, request) }
+        }
+    }
+
+    private fun parseReviewIssues(report: String): List<ReviewIssue> {
+        val regex = Regex("\\[(P[012])\\]\\s*\\[(?:第(\\d+)章|全局)\\]\\s*(.+)")
+        return report.lineSequence().mapNotNull { line -> regex.find(line.trim())?.let { match ->
+            ReviewIssue(severity = match.groupValues[1], chapterNumber = match.groupValues[2].toIntOrNull() ?: 0, summary = match.groupValues[3].take(240))
+        } }.toList()
+    }
+
     private fun reviewModelConfig(): ModelConfig = modelConfig.value.let { config ->
         if (config.reviewerBaseUrl.isBlank() || config.reviewerApiKey.isBlank() || config.reviewerModel.isBlank()) config
-        else config.copy(baseUrl = config.reviewerBaseUrl, apiKey = config.reviewerApiKey, model = config.reviewerModel)
+        else config.copy(baseUrl = config.reviewerBaseUrl, apiKey = config.reviewerApiKey, model = config.reviewerModel, protocol = config.reviewerProtocol.ifBlank { config.protocol })
     }
 
     fun generateLongFormBlueprint() {
@@ -644,6 +1124,37 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         return "记忆已更新：新增 $addedItems 条资料、$addedEdges 条关系、${mentionedItemIds.size} 条章节引用"
     }
 
+    private suspend fun runMandatoryGateStages(chapter: Chapter, memoryMessage: String): MandatoryGateResult {
+        val project = selectedProject.value?.takeIf { it.id == chapter.projectId }
+            ?: return MandatoryGateResult(false, "作品已切换，稍后会重试闭环", emptyList())
+        val snapshot = ContextEngine.build(
+            project, chapter, chapters.value, storyItems.value, anchors.value, edges.value,
+            chapterMentions.value, researchNotes.value, ragChunks.value,
+        ).prompt.take(12_000)
+        val localIssues = QualityGate.inspect(chapter, storyItems.value, anchors.value, project) +
+            PacingPlanner.warnings(project, chapter, pacingEvents.value, eventMatrixRules.value)
+        val blockingLocalIssues = localIssues.filter(::isBlockingLocalIssue)
+        val localText = when {
+            blockingLocalIssues.isNotEmpty() -> "FAIL: [P0] " + blockingLocalIssues.joinToString("；") { "${it.title}: ${it.detail}" }
+            localIssues.any { it.severity == QualitySeverity.WARNING } -> "WARN: " + localIssues.joinToString("；") { "${it.title}: ${it.detail}" }
+            else -> "PASS: 本地一致性、节奏和 AI 痕迹检查通过"
+        }
+        val reports = listOf(
+            "记忆更新" to memoryMessage,
+            "本地一致性与节奏" to localText,
+        )
+        reports.forEach { (stage, content) ->
+            val passed = !blocksChapterLifecycle(stage, content)
+            repository.addGateReport(ChapterGateReport(projectId = project.id, chapterId = chapter.id, stage = stage, passed = passed, content = content, contextSnapshot = snapshot))
+        }
+        val failed = reports.filter { (stage, content) -> blocksChapterLifecycle(stage, content) }
+        return MandatoryGateResult(
+            passed = failed.isEmpty(),
+            summary = if (failed.isEmpty()) "记忆与本地一致性检查通过；文风、审稿和校对可在审核页按需执行" else failed.joinToString("；") { it.first },
+            reports = reports,
+        )
+    }
+
     private suspend fun runChapterLifecycle(chapter: Chapter, request: GenerationRequest): ChapterLifecycleResult {
         repository.updateChapterLifecycle(
             chapter = chapter,
@@ -664,28 +1175,9 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                 runCatching { MemoryExtractionParser.parse(raw) }.fold(
                     onSuccess = { extraction ->
                         val memoryMessage = applyMemoryExtraction(chapter, extraction)
-                        val warnings = QualityGate.inspect(chapter, storyItems.value, anchors.value, selectedProject.value)
-                            .filter { it.severity == QualitySeverity.WARNING }
-                        if (warnings.isEmpty()) {
-                            repository.updateChapterLifecycle(
-                                chapter = chapter,
-                                lifecycleStatus = ChapterLifecycleStatus.PASSED,
-                                lifecycleDetail = memoryMessage,
-                                memoryUpdatedAt = System.currentTimeMillis(),
-                            )
-                            ChapterLifecycleResult(true, "$memoryMessage；门禁已通过")
-                        } else {
-                            val summary = warnings.joinToString("；") { it.title }
-                            repository.updateChapterLifecycle(
-                                chapter = chapter,
-                                lifecycleStatus = ChapterLifecycleStatus.WAITING_REVIEW,
-                                lifecycleDetail = "$memoryMessage；请在审阅页处理后确认",
-                                qualityStatus = ChapterQualityStatus.NEEDS_REPAIR,
-                                qualityIssueSummary = summary,
-                                memoryUpdatedAt = System.currentTimeMillis(),
-                            )
-                            ChapterLifecycleResult(false, "门禁发现 ${warnings.size} 项风险：$summary")
-                        }
+                        val gate = runMandatoryGateStages(chapter, memoryMessage)
+                        repository.recordGateOutcome(chapter, gate.passed, gate.summary, if (gate.passed) "" else gate.summary)
+                        ChapterLifecycleResult(gate.passed, gate.summary)
                     },
                     onFailure = {
                         repository.updateChapterLifecycle(
@@ -707,6 +1199,105 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
             },
         )
     }
+
+    private fun queueChapterLifecycle(chapter: Chapter) {
+        viewModelScope.launch {
+            repository.enqueueChapterLifecycle(chapter)
+            processLifecycleQueue()
+        }
+    }
+
+    private fun processLifecycleQueue() {
+        if (lifecycleQueueRunner?.isActive == true) return
+        val projectId = selectedProjectId.value ?: return
+        val config = modelConfig.value
+        if (config.baseUrl.isBlank() || config.apiKey.isBlank() || config.model.isBlank()) return
+        val request = beginGeneration(GenerationTask.CHAPTER_LIFECYCLE) ?: return
+        lifecycleQueueRunner = viewModelScope.launch {
+            try {
+                while (isActive) {
+                    val queued = repository.nextQueuedChapterLifecycle(projectId) ?: break
+                    val job = repository.claimChapterLifecycle(queued) ?: continue
+                    activeLifecycleJob = job
+                    val chapter = repository.chapterById(job.chapterId)
+                    if (chapter == null) {
+                        repository.finishChapterLifecycle(job, passed = false, detail = "章节已删除")
+                        activeLifecycleJob = null
+                        continue
+                    }
+                    if (chapter.contentFingerprint() != job.contentFingerprint) {
+                        repository.enqueueChapterLifecycle(chapter)
+                        activeLifecycleJob = null
+                        continue
+                    }
+                    val result = runChapterLifecycle(chapter, request)
+                    if (result.message == "作品已切换，稍后会重试闭环") {
+                        repository.requeueChapterLifecycle(job, result.message)
+                        activeLifecycleJob = null
+                        break
+                    }
+                    val finish = repository.finishChapterLifecycle(job, result.passed, result.message)
+                    if (finish.saved && !result.passed) {
+                        message.value = "第${chapter.number}章已保存；后台闭环未通过：${result.message}。可在审核页重试。"
+                    }
+                    if (finish.saved && result.passed && finish.nextChapterId != null) {
+                        selectedChapterId.value = finish.nextChapterId
+                        val nextChapter = repository.chapterById(finish.nextChapterId)
+                        if (nextChapter != null && finish.nextChapterAction == NextChapterAction.GENERATE_WITH_AI) {
+                            val project = selectedProject.value?.takeIf { it.id == nextChapter.projectId }
+                            if (project != null) startContinuation(project, nextChapter, "")
+                        } else if (nextChapter != null) {
+                            message.value = "第${chapter.number}章闭环通过，已新建第${nextChapter.number}章"
+                        }
+                    }
+                    activeLifecycleJob = null
+                }
+            } catch (cancelled: CancellationException) {
+                activeLifecycleJob?.let { repository.requeueChapterLifecycle(it, "已暂停，可稍后继续") }
+                throw cancelled
+            } finally {
+                activeLifecycleJob = null
+                lifecycleQueueRunner = null
+                finishGeneration(GenerationTask.CHAPTER_LIFECYCLE, request)
+            }
+        }
+        generationJobs[GenerationTask.CHAPTER_LIFECYCLE] = lifecycleQueueRunner!!
+    }
+
+    private suspend fun persistContinuitySnapshot(
+        project: NovelProject,
+        chapter: Chapter,
+        knownChapters: List<Chapter>,
+    ): ChapterContinuitySnapshot {
+        val predecessor = knownChapters.filter { it.number < chapter.number && it.content.isNotBlank() }.maxByOrNull { it.number }
+        val packet = ContextEngine.build(
+            project = project,
+            current = chapter,
+            chapters = knownChapters,
+            storyItems = storyItems.value,
+            anchors = anchors.value,
+            edges = edges.value,
+            mentions = chapterMentions.value,
+            researchNotes = researchNotes.value,
+            ragChunks = ragChunks.value,
+        )
+        val snapshot = ChapterContinuitySnapshot(
+            chapterId = chapter.id,
+            projectId = project.id,
+            predecessorChapterId = predecessor?.id ?: 0,
+            predecessorTail = predecessor?.content?.takeLast(2_200).orEmpty(),
+            contextPrompt = packet.prompt,
+            confirmationStatus = if (predecessor == null || predecessor.lifecycleStatus == ChapterLifecycleStatus.PASSED) {
+                ContinuitySnapshotStatus.CONFIRMED
+            } else {
+                ContinuitySnapshotStatus.PENDING
+            },
+        )
+        repository.saveContinuitySnapshot(snapshot)
+        return snapshot
+    }
+
+    private fun Chapter.contentFingerprint(): String = "${content.length}:${content.hashCode()}"
 
     fun extractMemoryFromCurrentChapter() {
         val chapter = selectedChapter.value ?: return
@@ -781,7 +1372,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val request = beginGeneration(GenerationTask.REPAIR_PLAN) ?: return
         message.value = "正在生成最短修复计划..."
         val context = buildString {
-            append(ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, researchNotes = researchNotes.value).prompt)
+            append(ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, researchNotes = researchNotes.value, ragChunks = ragChunks.value).prompt)
             appendLine("\n门禁问题：")
             issues.forEach { appendLine("- ${it.title}：${it.detail}") }
         }
@@ -807,7 +1398,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val chapter = selectedChapter.value ?: return
         val request = beginGeneration(GenerationTask.CHAPTER_PLAN) ?: return
         message.value = "正在根据本地记忆生成本章计划..."
-        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, researchNotes = researchNotes.value).prompt +
+        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, researchNotes = researchNotes.value, ragChunks = ragChunks.value).prompt +
             "\n请为当前章节生成大纲，覆盖冲突、转折和结尾钩子。"
         generationJobs[GenerationTask.CHAPTER_PLAN] = viewModelScope.launch {
             try {
@@ -831,7 +1422,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         val chapter = selectedChapter.value ?: return
         val request = beginGeneration(GenerationTask.BEAT_SHEET) ?: return
         message.value = "正在生成本章分镜..."
-        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, researchNotes = researchNotes.value).prompt +
+        val context = ContextEngine.build(project, chapter, chapters.value, storyItems.value, anchors.value, researchNotes = researchNotes.value, ragChunks = ragChunks.value).prompt +
             "\n请把本章计划拆成按顺序执行的场景分镜。"
         generationJobs[GenerationTask.BEAT_SHEET] = viewModelScope.launch {
             try {
@@ -881,6 +1472,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         modelPreferences.save(config)
         modelConfig.value = config
         message.value = "模型配置已加密保存到本机"
+        processLifecycleQueue()
     }
 
     fun testModelConfig(config: ModelConfig) {
@@ -893,40 +1485,130 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun generateContinuation() {
+    fun generateContinuation(direction: String = "") {
         val project = selectedProject.value ?: return
         val chapter = selectedChapter.value ?: return
-        blockingLifecycleChapter()?.let {
-            message.value = "第${it.number}章尚未完成写作闭环，请先到审阅页处理"
-            return
-        }
         if (hasPendingCascade()) { message.value = "改纲待审项尚未复核，暂不能继续写作"; return }
         val sourceContent = pendingChapterContent[chapter.id] ?: chapter.content
         val sourceChapter = chapter.copy(content = sourceContent)
+        startContinuation(project, sourceChapter, direction)
+    }
+
+    private fun startContinuation(project: NovelProject, chapter: Chapter, direction: String) {
+        if (!modelConfig.value.hasTextGenerationConfiguration()) {
+            message.value = "请先在“我的”配置文本创作模型"
+            return
+        }
         val request = beginGeneration(GenerationTask.CONTINUATION) ?: return
+        streamedContinuation.value = ""
         message.value = "正在直接请求你的模型..."
-        val writingContext = ContextEngine.build(project, sourceChapter, chapters.value, storyItems.value, anchors.value, researchNotes = researchNotes.value).prompt
         generationJobs[GenerationTask.CONTINUATION] = viewModelScope.launch {
             try {
-                val result = modelClient.continueWriting(modelConfig.value, writingContext, request)
+                message.value = "正在生成本章计划与分镜..."
+                val preparedChapter = prepareChapterForWriting(project, chapter, chapters.value, request).getOrElse {
+                    message.value = "章节计划或分镜准备失败：${it.message ?: "模型请求失败"}"
+                    return@launch
+                }
+                if (preparedChapter.outline != chapter.outline) {
+                    repository.updateChapterPlan(chapter, preparedChapter.outline, chapter.targetWordCount)
+                }
+                if (preparedChapter.beatSheet != chapter.beatSheet) {
+                    repository.updateChapterBeatSheet(preparedChapter, preparedChapter.beatSheet)
+                }
+                val continuitySnapshot = persistContinuitySnapshot(project, preparedChapter, chapters.value)
+                val writingContext = buildString {
+                    append(continuitySnapshot.contextPrompt)
+                    appendLine("\n作者本次续写方向：${direction.trim().ifBlank { "根据当前章节未解决冲突自然推进，保留悬念。" }}")
+                    if (project.forbiddenContent.isNotBlank()) appendLine("项目核心禁区（必须遵守）：${project.forbiddenContent}")
+                    val wordRange = normalizeChapterWordRange(project.targetChapterWordCount, project.targetChapterWordCountMax)
+                    appendLine("本章目标字数：${wordRange.min}-${wordRange.max} 字。自动化等级：${project.automationLevel}。")
+                    appendLine("本章入口角度（与前章轮换）：${ChapterEntryAngles.forChapter(chapter.number)}")
+                }
+                message.value = "正在根据计划续写正文..."
+                val result = modelClient.continueWriting(modelConfig.value, writingContext, request) { delta ->
+                    if (selectedChapter.value?.id == chapter.id) streamedContinuation.value = sanitizeNovelBody(streamedContinuation.value + delta)
+                }
                 if (!isActive) return@launch
                 result.fold(
                     onSuccess = { generated ->
                         // Preserve text typed while the model was generating; AI output only appends.
                         saveChapterJobs.remove(chapter.id)?.cancel()
-                        val currentChapter = chapters.value.firstOrNull { it.id == chapter.id } ?: chapter
+                        val currentChapter = chapters.value.firstOrNull { it.id == chapter.id }?.copy(
+                            outline = preparedChapter.outline,
+                            beatSheet = preparedChapter.beatSheet,
+                        ) ?: preparedChapter
                         val currentContent = pendingChapterContent.remove(chapter.id) ?: currentChapter.content
-                        val updatedChapter = currentChapter.copy(content = currentContent.trimEnd() + "\n\n" + generated)
-                        repository.updateChapter(currentChapter, updatedChapter.content)
-                        val lifecycle = runChapterLifecycle(updatedChapter, request)
-                        message.value = if (lifecycle.passed) "已续写并完成闭环：${lifecycle.message}" else "已保存续写草稿：${lifecycle.message}"
+                        val body = sanitizeNovelBody(generated)
+                        if (body.isBlank()) {
+                            message.value = "模型没有返回可用正文，请重试"
+                            return@fold
+                        }
+                        val title = if (shouldGenerateChapterTitle(currentChapter.title, currentContent)) {
+                            val fallbackTitle = "第${currentChapter.number}章：新的篇章"
+                            modelClient.generateChapterTitle(modelConfig.value, body, request)
+                                .getOrDefault(fallbackTitle)
+                                .let { chapterTitleOrFallback(it, fallbackTitle) }
+                        } else {
+                            currentChapter.title
+                        }
+                        val updatedChapter = currentChapter.copy(
+                            title = title,
+                            content = appendGeneratedChapterContent(currentContent, body),
+                        )
+                        repository.updateChapter(updatedChapter, updatedChapter.content)
+                        streamedContinuation.value = ""
+                        queueChapterLifecycle(updatedChapter)
+                        message.value = "已续写到草稿；章节闭环正在后台处理，不会覆盖当前正文"
                     },
                     onFailure = { message.value = it.message ?: "续写失败" },
                 )
             } finally {
+                streamedContinuation.value = ""
                 finishGeneration(GenerationTask.CONTINUATION, request)
             }
         }
+    }
+
+    private suspend fun applyAutomaticHumanization(project: NovelProject, chapter: Chapter, request: GenerationRequest): Chapter {
+        if (project.automationLevel != "自动推进" || chapter.content.isBlank()) return chapter
+        val first = modelClient.humanizeChapter(
+            modelConfig.value,
+            "自动推进模式第一遍去 AI 化润色。只输出完整正文，不改变剧情事实、人物关系、视角或篇幅。\n\n正文：\n${chapter.content}",
+            request,
+        ).getOrNull() ?: return chapter
+        val second = modelClient.humanizeChapter(
+            modelConfig.value,
+            "自动推进模式第二遍去 AI 化校对。只处理残留机械重复、模板化衔接和同质句式；只输出完整正文。\n\n正文：\n$first",
+            request,
+        ).getOrNull() ?: return chapter
+        return repository.replaceChapterWithRevision(chapter, second, "自动推进双遍去 AI 润色")
+    }
+
+    /** The same plan -> beat -> prose pipeline is used for continuation and unattended batches. */
+    private suspend fun prepareChapterForWriting(
+        project: NovelProject,
+        chapter: Chapter,
+        knownChapters: List<Chapter>,
+        request: GenerationRequest,
+    ): Result<Chapter> = runCatching {
+        var prepared = chapter
+        if (prepared.outline.isBlank()) {
+            val planContext = ContextEngine.build(
+                project, prepared, knownChapters, storyItems.value, anchors.value,
+                researchNotes = researchNotes.value, ragChunks = ragChunks.value,
+            ).prompt + "\n请生成当前章节计划，必须包含冲突、转折、结尾钩子，并遵守所有锚点与禁区。"
+            val outline = modelClient.generateChapterPlan(modelConfig.value, planContext, request).getOrThrow()
+            prepared = prepared.copy(outline = outline)
+        }
+        if (prepared.beatSheet.isBlank()) {
+            val beatContext = ContextEngine.build(
+                project, prepared, knownChapters, storyItems.value, anchors.value,
+                researchNotes = researchNotes.value, ragChunks = ragChunks.value,
+            ).prompt + "\n请把当前章节计划拆成依序执行的场景分镜。每个分镜必须服务于章节目标，并保留结尾钩子。"
+            val beatSheet = modelClient.generateBeatSheet(modelConfig.value, beatContext, request).getOrThrow()
+            prepared = prepared.copy(beatSheet = beatSheet)
+        }
+        prepared
     }
 
     private fun startAutoWrite(project: NovelProject, run: AutoWriteRun) {
@@ -951,17 +1633,34 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                 repeat(currentRun.requestedCount - currentRun.completedCount) {
                     val nextNumber = (workingChapters.maxOfOrNull { it.number } ?: 0) + 1
                     val target = Chapter(projectId = project.id, number = nextNumber, title = "第${nextNumber}章")
-                    val context = ContextEngine.build(project, target, workingChapters, storyItems.value, anchors.value, edges.value, researchNotes = researchNotes.value).prompt +
-                        "\n这是可恢复批量写作的第${currentRun.completedCount + 1}/${currentRun.requestedCount}章。请完整写出本章。"
+                    currentRun = repository.updateAutoWriteRun(currentRun, currentRun.completedCount, AutoWriteRunStatus.RUNNING, "正在规划第${nextNumber}章")
+                    val preparedTarget = prepareChapterForWriting(project, target, workingChapters, request).getOrElse {
+                        currentRun = repository.updateAutoWriteRun(currentRun, currentRun.completedCount, AutoWriteRunStatus.PAUSED, "第${nextNumber}章规划失败：${it.message ?: "模型请求失败"}")
+                        message.value = "批量写作已暂停：${currentRun.detail}"
+                        return@launch
+                    }
+                    val context = ContextEngine.build(project, preparedTarget, workingChapters, storyItems.value, anchors.value, edges.value, researchNotes = researchNotes.value, ragChunks = ragChunks.value).prompt +
+                        "\n这是可恢复批量写作的第${currentRun.completedCount + 1}/${currentRun.requestedCount}章。请完整写出本章。\n本章入口角度（与前章轮换）：${ChapterEntryAngles.forChapter(nextNumber)}"
                     val body = modelClient.writeFullChapter(modelConfig.value, context, request).getOrElse {
                         currentRun = repository.updateAutoWriteRun(currentRun, currentRun.completedCount, AutoWriteRunStatus.PAUSED, it.message ?: "模型请求失败")
                         message.value = "批量写作已暂停：${currentRun.detail}"
                         return@launch
                     }
-                    val completed = repository.addGeneratedDraftChapter(project.id, body, currentRun.id)
+                    val fallbackTitle = "第${nextNumber}章：新的篇章"
+                    val title = modelClient.generateChapterTitle(modelConfig.value, body, request)
+                        .getOrDefault(fallbackTitle)
+                        .let { chapterTitleOrFallback(it, fallbackTitle) }
+                    val completed = repository.addGeneratedDraftChapter(
+                        projectId = project.id,
+                        content = sanitizeNovelBody(body),
+                        title = title,
+                        autoWriteRunId = currentRun.id,
+                        outline = preparedTarget.outline,
+                        beatSheet = preparedTarget.beatSheet,
+                    )
                     workingChapters += completed
                     selectedChapterId.value = completed.id
-                    val lifecycle = runChapterLifecycle(completed, request)
+                    val lifecycle = runChapterLifecycle(applyAutomaticHumanization(project, completed, request), request)
                     if (!lifecycle.passed) {
                         currentRun = repository.updateAutoWriteRun(currentRun, currentRun.completedCount + 1, AutoWriteRunStatus.PAUSED, "第${completed.number}章：${lifecycle.message}")
                         message.value = "第${completed.number}章待处理，批量写作已暂停"
@@ -1059,16 +1758,8 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
             message.value = "本章还没有正文，无法运行写作闭环"
             return
         }
-        val request = beginGeneration(GenerationTask.CHAPTER_LIFECYCLE) ?: return
-        message.value = "正在重试章节记忆与质量门禁..."
-        generationJobs[GenerationTask.CHAPTER_LIFECYCLE] = viewModelScope.launch {
-            try {
-                val result = runChapterLifecycle(chapter, request)
-                message.value = if (result.passed) "章节闭环完成：${result.message}" else result.message
-            } finally {
-                finishGeneration(GenerationTask.CHAPTER_LIFECYCLE, request)
-            }
-        }
+        queueChapterLifecycle(chapter)
+        message.value = "已加入章节闭环队列，将在后台重试"
     }
 
     private fun rewriteCurrentChapter(task: GenerationTask, humanize: Boolean) {
@@ -1088,7 +1779,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                 val source = chapter.copy(content = content)
                 if (source.content != chapter.content) repository.updateChapter(chapter, source.content)
                 val context = buildString {
-                    append(ContextEngine.build(project, source, chapters.value, storyItems.value, anchors.value, edges.value, researchNotes = researchNotes.value).prompt)
+                    append(ContextEngine.build(project, source, chapters.value, storyItems.value, anchors.value, edges.value, researchNotes = researchNotes.value, ragChunks = ragChunks.value).prompt)
                     appendLine("\n当前完整正文：")
                     appendLine(source.content)
                     if (!humanize) {
@@ -1096,14 +1787,24 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
                         QualityGate.inspect(source, storyItems.value, anchors.value, project).forEach { appendLine("- ${it.title}：${it.detail}") }
                     }
                 }
-                val result = if (humanize) modelClient.humanizeChapter(modelConfig.value, context, request)
-                else modelClient.rewriteChapter(modelConfig.value, context, request)
+                val result = if (humanize) {
+                    modelClient.humanizeChapter(modelConfig.value, context, request).fold(
+                        onSuccess = { firstPass ->
+                            modelClient.humanizeChapter(
+                                modelConfig.value,
+                                "这是第一遍润色后的正文。执行第二遍去 AI 化校对：只消除残留的机械重复、模板化衔接和同质句式，不改变剧情事实、人物关系、视角或篇幅。\n\n正文：\n$firstPass",
+                                request,
+                            )
+                        },
+                        onFailure = { Result.failure(it) },
+                    )
+                } else modelClient.rewriteChapter(modelConfig.value, context, request)
                 result.fold(
                     onSuccess = { replacement ->
                         val updated = repository.replaceChapterWithRevision(
                             source,
                             replacement,
-                            if (humanize) "去 AI 味润色" else "按门禁问题 AI 改写",
+                            if (humanize) "双遍去 AI 润色" else "按门禁问题 AI 改写",
                         )
                         val lifecycle = runChapterLifecycle(updated, request)
                         message.value = if (lifecycle.passed) "AI 改写已复检通过，可在审阅页撤回" else "AI 改写已保存：${lifecycle.message}"
@@ -1133,7 +1834,10 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         if (task !in generationTasks.value) return
         generationRequests[task]?.cancel()
         generationJobs[task]?.cancel()
-        selectedChapter.value?.takeIf { it.lifecycleStatus == ChapterLifecycleStatus.PROCESSING }?.let { chapter ->
+        if (task == GenerationTask.CONTINUATION) streamedContinuation.value = ""
+        if (task == GenerationTask.CHAPTER_LIFECYCLE) activeLifecycleJob?.let { job ->
+            viewModelScope.launch { repository.requeueChapterLifecycle(job, "作者已暂停，可稍后继续") }
+        } else selectedChapter.value?.takeIf { it.lifecycleStatus == ChapterLifecycleStatus.PROCESSING }?.let { chapter ->
             viewModelScope.launch {
                 repository.updateChapterLifecycle(
                     chapter = chapter,
@@ -1146,7 +1850,7 @@ class NovelViewModel(application: Application) : AndroidViewModel(application) {
         message.value = "已取消${task.label}，其他任务继续运行"
     }
 
-    fun clearMessage() {
-        message.value = null
+    fun clearMessage(expectedMessage: String? = null) {
+        if (expectedMessage == null || message.value == expectedMessage) message.value = null
     }
 }

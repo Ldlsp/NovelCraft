@@ -41,6 +41,10 @@ object QualityGate {
             issues += QualityIssue(QualitySeverity.INFO, "结尾钩子可再明确", "结尾没有完整收束句，确认是否需要留下下一章的动作或悬念。")
         }
         issues += PacingGuard.inspect(project, chapter)
+        val aiTrace = AiTraceDetector.inspect(content)
+        if (aiTrace.score >= 45) {
+            issues += QualityIssue(QualitySeverity.WARNING, "AI 痕迹风险偏高", aiTrace.findings.take(2).joinToString("；"))
+        }
         if (issues.isEmpty()) issues += QualityIssue(QualitySeverity.INFO, "本地检查通过", "未发现篇幅、占位符、重复段落或保密设定风险。")
         return issues
     }

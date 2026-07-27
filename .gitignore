@@ -6,3 +6,13 @@ local.properties
 *.iml
 *.apk
 test-artifacts/
+*.jks
+*.keystore
+keystore.properties
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite
+*.sqlite3
+*.log

@@ -1,9 +1,11 @@
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="108dp"
-    android:height="108dp"
+    android:width="48dp"
+    android:height="48dp"
     android:viewportWidth="48"
     android:viewportHeight="48">
-    <!-- Open pages form a small paper boat; the brush makes its mast. -->
+    <path
+        android:fillColor="#C8401A"
+        android:pathData="M4,4h40v40h-40z" />
     <path
         android:fillColor="#FFFDF8"
         android:pathData="M10,18.4c4.2,-1.9 9,-1.4 13.2,1.5v15.1c-4.2,-2.8 -9,-3.4 -13.2,-1.5z" />

@@ -27,6 +27,20 @@ class ContextAndQualityTest {
     }
 
     @Test
+    fun writingContextAlwaysForcesThirdPersonNarration() {
+        val chapter = Chapter(id = 3, projectId = 1, number = 2, title = "雨夜", content = "沈舟走进空仓库。")
+
+        val packet = ContextEngine.build(
+            project.copy(styleGuide = "第一人称限知叙事，短句推进"),
+            chapter,
+            listOf(chapter),
+            emptyList(),
+        )
+
+        assertTrue(packet.prompt.contains("必须使用第三人称叙事；严禁使用“我”作为叙述主语"))
+    }
+
+    @Test
     fun warnsWithoutBlockingForDuplicatePlaceholderAndForbiddenReveal() {
         val chapter = Chapter(
             projectId = 1,

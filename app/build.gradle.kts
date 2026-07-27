@@ -1,8 +1,19 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.devtools.ksp")
 }
+
+val releasePropertiesFile = rootProject.file("keystore.properties")
+val releaseProperties = Properties().apply {
+    if (releasePropertiesFile.exists()) {
+        releasePropertiesFile.inputStream().use(::load)
+    }
+}
+val hasReleaseSigning = listOf("storeFile", "storePassword", "keyAlias", "keyPassword")
+    .all { releaseProperties.getProperty(it)?.isNotBlank() == true }
 
 android {
     namespace = "com.mozhou.novelcraft"
@@ -12,8 +23,8 @@ android {
         applicationId = "com.mozhou.novelcraft"
         minSdk = 26
         targetSdk = 34
-        versionCode = 29
-        versionName = "0.10.6"
+        versionCode = 50
+        versionName = "0.22.6"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -25,6 +36,25 @@ android {
     }
     kotlinOptions { jvmTarget = "17" }
     packaging { resources.excludes += "/META-INF/{AL2.0,LGPL2.1}" }
+
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = file(releaseProperties.getProperty("storeFile"))
+                storePassword = releaseProperties.getProperty("storePassword")
+                keyAlias = releaseProperties.getProperty("keyAlias")
+                keyPassword = releaseProperties.getProperty("keyPassword")
+            }
+        }
+    }
+
+    buildTypes {
+        getByName("release") {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+        }
+    }
 }
 
 dependencies {
@@ -43,6 +73,8 @@ dependencies {
     ksp("androidx.room:room-compiler:2.6.1")
     implementation("androidx.security:security-crypto:1.1.0-alpha06")
     implementation("net.sf.kxml:kxml2:2.3.0")
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20231013")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.7.3")

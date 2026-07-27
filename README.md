@@ -1,59 +1,122 @@
 # 墨舟 NovelCraft Android
 
-面向网文作者的本地优先 Android 应用。作品、章节和资料保存到本机 SQLite；模型调用由手机直接访问用户填写的 OpenAI 兼容 Base URL，API Key 不会进入任何业务服务端。
+[English](README_EN.md) | [Surper Ai](https://surperai.top/) | [发行说明](docs/releases/v0.22.6.md) | [贡献指南](CONTRIBUTING.md)
 
-## 已可用功能
+面向中文网文作者的本地优先 Android 创作工具。小说、章节、大纲和资料卡默认保存在设备本机；作者自行决定何时连接 AI，以及使用哪一家兼容服务。
 
-- 新建作品，保存书名、题材和一句话设定
-- 导入 TXT / Markdown / DOCX，并自动识别“第 N 章”标题
-- 识别“第十二章”和 Markdown 章节标题，减少旧稿导入后的手工整理
-- 从创作页一键导出完整作品为 UTF-8 Markdown，便于备份或转到其他编辑器
-- 本地 SQLite 持久化项目、章节和资料卡
-- 手机章节编辑器，500ms 防抖自动保存
-- 横向章节轨道、章节新建和标题自动保存
-- 人物、伏笔、地点、时间线、禁区等资料卡，支持活跃、已回收、保密状态
-- 每章的冲突/转折/钩子大纲与目标字数，均离线自动保存
-- 大纲锚点可限定章节区间、核心冲突、允许推进、禁止揭露与章末张力，并自动注入续写和审核
-- 资料卡之间可记录关系，形成可持续维护的本地知识图谱
-- 已配置模型时，可基于本地设定和历史章节生成可编辑的本章计划
-- 支持将章节计划拆成 4-7 条 Beat Sheet 分镜，续写时强制按场景顺序展开
-- 可从当前章节自动抽取资料卡和关系图谱，模型输出经过结构校验后才写入本机数据库
-- 项目可维护文风档案，也可从当前样章提取；续写、计划、分镜均自动遵守该档案
-- 续写、计划、分镜、文风、知识图谱和修复计划可并行生成；每项可单独取消，不会中断其他任务
-- AI 返回时只会追加到作者当前草稿之后，不会覆盖等待期间继续输入的文字
-- 审核页可基于门禁问题生成最短修复计划；正文只由作者确认后手动修改
-- 离线本地检索：续写时按当前章节从资料卡和历史章节取回相关上下文
-- 可解释的本地质量门：篇幅、占位符、重复段落、保密设定、结尾收束提示
-- 用户填写 Base URL、API Key、模型名称
-- 直接调用 OpenAI 兼容的 `/models` 和 `/chat/completions`
-- API Key 使用 Android Keystore 加密存储
+## 推荐 AI 网关：Surper Ai
 
-## 本地运行
+NovelCraft 原生支持 OpenAI 兼容接口，推荐使用 [Surper Ai](https://surperai.top/) 为创作工作流接入多模型 AI API。
 
-1. 使用 Android Studio 打开项目根目录。
-2. 使用 Android SDK 34、JDK 17。
-3. 连接 Android 设备或启动模拟器。
-4. 运行 `app` 模块。
+1. 前往 [surperai.top](https://surperai.top/) 创建并管理你的 API Key。
+2. 在应用“我的 -> 文本创作模型”中填写：
+   - Base URL：`https://surperai.top/v1`
+   - API Key：你的 Surper Ai API Key
+   - 模型名称：从 Surper Ai 控制台选择的可用模型
+3. 保存并测试连接后，即可用于开书、续写、计划、分镜和审核。
 
-命令行构建：
+Surper Ai 是可选服务，NovelCraft 不会将作者绑定到单一提供商。可用模型、价格、额度和服务公告以 [Surper Ai 官网](https://surperai.top/) 为准；切勿将 API Key 提交到 GitHub、截图或日志中。
+
+## 为什么是 NovelCraft
+
+- 本地优先：没有账号体系、云端作品库或强制同步，作品数据存放在设备本地 SQLite。
+- 作者掌控：AI 生成内容进入可编辑草稿，不替代作者做最终发布决定。
+- 长篇连续性：人物、关系、伏笔、锚点、禁区和章节记忆会参与后续写作。
+- 直接接入：手机直接调用作者配置的 OpenAI 兼容 Base URL；密钥使用 Android Keystore 加密保存。
+
+## 功能
+
+| 创作 | 连续性与质量 | 文件与项目 |
+| --- | --- | --- |
+| 从灵感生成开书资料与第一章 | 章节计划、4-7 条场景分镜与结尾钩子 | 导入 TXT、Markdown、DOCX、EPUB、PDF |
+| AI 实时生成直接显示在编辑器中 | 人物、地点、事件、伏笔和关系图谱 | 导出 Markdown、DOCX、EPUB、PDF |
+| 自动生成章节标题，支持续写与批量写作 | 大纲锚点、禁区、节奏事件和本地检索 | JSON 项目备份与恢复 |
+| 文风提取、封面生成和编辑器自动保存 | 篇幅、占位符、重复、保密设定和收束提示检查 | 本地封面、书架和全文搜索 |
+
+## 快速开始
+
+### 使用 APK
+
+从 GitHub Releases 下载与设备匹配的安装包。公开首发前的本地构建为 debug 签名，仅适合测试；正式发行包会使用 GitHub Actions 中配置的发布签名。
+
+### 从源码构建
+
+前置条件：Android SDK 34、JDK 17、Android Studio Hedgehog 或更高版本。
+
+```bash
+git clone https://github.com/X-ShuChang/NovelCraft.git
+cd NovelCraft
+./gradlew testDebugUnitTest assembleDebug
+```
+
+生成的 APK：`app/build/outputs/apk/debug/app-debug.apk`
+
+Windows PowerShell：
 
 ```powershell
 .\gradlew.bat testDebugUnitTest assembleDebug
 ```
 
-Debug APK:
+## AI 配置
 
-`app/build/outputs/apk/debug/app-debug.apk`
+在“我的”页面填写文本模型的 Base URL、API Key 与模型名称。应用会通过 `/models` 和 `/chat/completions` 使用 OpenAI 兼容接口；图像封面模型可单独配置。
 
-## 数据与安全
+接入 Surper Ai 时，使用 `https://surperai.top/v1`。NovelCraft 也允许配置其他兼容服务。请只使用你有权使用的模型和内容，并自行确认服务商的条款与数据处理规则。
 
-- 小说数据：内部数据库 `novelcraft.db`
-- 模型配置：Android Keystore 加密的 SharedPreferences
-- Base URL：首版仅允许 HTTPS，避免 API Key 在明文链路上传输
-- 离线：可完整浏览和编辑本地作品；AI 续写与连接测试需要网络
+## 数据与隐私
 
-## 当前边界
+- 小说正文、设定、章节计划、资料卡和项目备份默认位于本机。
+- API Key 通过 Android Keystore 加密的 SharedPreferences 保存。
+- 网络只在作者主动使用 AI、联网调研或测试连接时发生。
+- 本项目不内置账号登录、作品云同步或应用服务端存储。
 
-- 当前支持 OpenAI 兼容 Chat Completions 接口。Anthropic 原生 Messages API 会单独适配。
-- 没有账号、云同步或服务端存储，符合“SQLite 本地优先”的首版方向。
-- AI 返回为一次性结果，不包含流式输出与断点续写；这些是下一阶段的交互重点。
+没有系统能替代你对敏感作品、密钥与第三方服务的判断。请定期导出项目备份，并在提交 Issue 前删除小说正文、API Key、数据库和日志中的敏感内容。
+
+## 架构
+
+```text
+Jetpack Compose UI
+        |
+   NovelViewModel
+        |
+NovelRepository + Room / SQLite
+        |
+作者配置的 OpenAI-compatible API
+        |
+   Surper Ai 或其他兼容服务
+```
+
+核心模块位于 `app/src/main/java/com/mozhou/novelcraft`：
+
+- `MainActivity.kt`：Compose 界面、编辑器和模型配置入口。
+- `NovelViewModel.kt`：生成任务、流式正文、章节闭环和交互状态。
+- `NovelRepository.kt` / `NovelDatabase.kt`：本地持久化与事务。
+- `ModelConfig.kt`：兼容 API 客户端与 Keystore 加密配置。
+- `ContextEngine.kt` / `QualityGate.kt`：上下文组织与本地质量门。
+
+## 开源协作
+
+本项目采用 [Apache License 2.0](LICENSE)。贡献代码前请阅读 [CONTRIBUTING.md](CONTRIBUTING.md)、[CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md) 与 [SECURITY.md](SECURITY.md)。
+
+提交 Pull Request 前至少运行：
+
+```bash
+./gradlew testDebugUnitTest assembleDebug
+```
+
+请勿提交 API Key、签名证书、`local.properties`、`keystore.properties`、用户作品、数据库、导出备份或真实生产日志。
+
+## 发行
+
+`v0.22.6` 是首个 GitHub 公开发行目标。维护者创建 `v0.22.6` 形式的标签后，GitHub Actions 会运行测试、构建 release APK 并创建 GitHub Release。签名密钥只通过 GitHub Actions Secrets 提供，详细配置见 [发行说明](docs/releases/v0.22.6.md)。
+
+## 路线图
+
+- 更完整的流式生成进度与可恢复写作体验
+- 更多兼容模型接口与可配置创作工作流
+- 更细粒度的导入分析、版本比较和本地备份策略
+- 面向贡献者的 UI 测试与截图回归
+
+## 致谢
+
+NovelCraft 感谢每一位作者和贡献者。使用 [Surper Ai](https://surperai.top/) 可以快速为 NovelCraft 接入兼容的多模型 AI API；欢迎在 Issue 中分享兼容性反馈，但请勿公开凭据或个人作品。

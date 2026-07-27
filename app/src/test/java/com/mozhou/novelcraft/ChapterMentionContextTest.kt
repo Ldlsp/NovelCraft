@@ -1,6 +1,7 @@
 package com.mozhou.novelcraft
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChapterMentionContextTest {
@@ -17,6 +18,20 @@ class ChapterMentionContextTest {
             mentions = listOf(ChapterStoryMention(projectId = 1, chapterId = linked.id, storyItemId = item.id)),
         )
 
-        assertEquals(linked, packet.relevantChapters.first())
+        assertEquals(unrelated, packet.relevantChapters.first())
+        assertTrue(packet.relevantChapters.contains(linked))
+    }
+
+    @Test
+    fun always_includes_the_immediate_previous_chapter_in_continuity_context() {
+        val project = NovelProject(id = 1, title = "测试", genre = "悬疑", premise = "寻找月契")
+        val olderRelevant = Chapter(id = 1, projectId = 1, number = 1, title = "月契", content = "沈舟发现月契的秘密。")
+        val immediatePrevious = Chapter(id = 2, projectId = 1, number = 2, title = "雨巷", content = "沈舟带着钥匙走进雨巷。")
+        val current = Chapter(id = 3, projectId = 1, number = 3, title = "追查", content = "月契在掌心发烫。")
+
+        val packet = ContextEngine.build(project, current, listOf(olderRelevant, immediatePrevious, current), emptyList())
+
+        assertEquals(immediatePrevious, packet.relevantChapters.first())
+        assertEquals(2, packet.relevantChapters.size)
     }
 }
