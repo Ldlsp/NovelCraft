@@ -194,7 +194,7 @@ data class IdeationDraft(
     @ColumnInfo(defaultValue = "''") val writingStyle: String = "",
     @ColumnInfo(defaultValue = "''") val forbiddenContent: String = "",
     @ColumnInfo(defaultValue = "'半自动'") val automationLevel: String = "半自动",
-    @ColumnInfo(defaultValue = "3000") val targetChapterWordCount: Int = 3000,
+    @ColumnInfo(defaultValue = "2000") val targetChapterWordCount: Int = 2200,
     @ColumnInfo(defaultValue = "5000") val targetChapterWordCountMax: Int = 5000,
     @ColumnInfo(defaultValue = "0") val targetWordCount: Int = 0,
     val createdAt: Long = System.currentTimeMillis(),
