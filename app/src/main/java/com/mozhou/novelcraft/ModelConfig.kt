@@ -418,7 +418,7 @@ class OpenAiCompatibleClient {
         }
     }
 
-    private fun validBaseUrl(config: ModelConfig) = config.baseUrl.startsWith("https://")
+    private fun validBaseUrl(config: ModelConfig) = config.baseUrl.startsWith("https://") || config.baseUrl.startsWith("http://")
     private fun endpoint(config: ModelConfig, stream: Boolean = false): String = when (config.protocol) {
         "anthropic" -> config.baseUrl.trimEnd('/') + "/v1/messages"
         "gemini" -> config.baseUrl.trimEnd('/') + "/models/${config.model}:${if (stream) "streamGenerateContent?alt=sse&" else "generateContent?"}key=${config.apiKey}"
