@@ -80,7 +80,7 @@ object ProjectBackupCodec {
         styleGuide = o.s("styleGuide"), outlineRevisionReport = o.s("outlineRevisionReport"), summary = o.s("summary"), tags = o.s("tags"),
         targetAudience = o.s("targetAudience"), protagonistName = o.s("protagonistName"), longFormBlueprint = o.s("longFormBlueprint"),
         targetChapterCount = o.optInt("targetChapterCount"), targetWordCount = o.optInt("targetWordCount"), pacingProfile = o.s("pacingProfile").ifBlank { "均衡" },
-        forbiddenContent = o.s("forbiddenContent"), automationLevel = o.s("automationLevel").ifBlank { "半自动" }, targetChapterWordCount = o.optInt("targetChapterWordCount", 3000), targetChapterWordCountMax = o.optInt("targetChapterWordCountMax", 5000),
+        forbiddenContent = o.s("forbiddenContent"), automationLevel = o.s("automationLevel").ifBlank { "半自动" }, targetChapterWordCount = o.optInt("targetChapterWordCount", 2000), targetChapterWordCountMax = o.optInt("targetChapterWordCountMax", 5000),
         createdAt = o.l("createdAt"), updatedAt = o.l("updatedAt"),
     )
     private fun chapter(v: Chapter) = JSONObject().apply { put("id",v.id);put("projectId",v.projectId);put("number",v.number);put("title",v.title);put("content",v.content);put("outline",v.outline);put("beatSheet",v.beatSheet);put("targetWordCount",v.targetWordCount);put("qualityStatus",v.qualityStatus);put("qualityIssueSummary",v.qualityIssueSummary);put("lifecycleStatus",v.lifecycleStatus);put("lifecycleDetail",v.lifecycleDetail);put("memoryUpdatedAt",v.memoryUpdatedAt);put("autoWriteRunId",v.autoWriteRunId);put("gateFailureCount",v.gateFailureCount);put("requiresHumanReview",v.requiresHumanReview);put("updatedAt",v.updatedAt) }
