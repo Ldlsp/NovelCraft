@@ -6,7 +6,7 @@ internal const val MAX_OPENING_CHAPTER_GENERATION_ATTEMPTS = 4
 internal data class ChapterWordRange(val min: Int, val max: Int)
 
 internal fun normalizeChapterWordRange(min: Int, max: Int): ChapterWordRange {
-    val normalizedMin = if (min > 0) min.coerceIn(3_000, 20_000) else 3_000
+    val normalizedMin = if (min > 0) min.coerceIn(2_000, 20_000) else 2_000
     val normalizedMax = if (max > 0) max.coerceIn(normalizedMin, 20_000) else 5_000.coerceAtLeast(normalizedMin)
     return ChapterWordRange(normalizedMin, normalizedMax)
 }
