@@ -10,7 +10,7 @@
         android:label="墨舟"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:theme="@style/Theme.NovelCraft"
-        android:usesCleartextTraffic="false">
+        android:usesCleartextTraffic="true">
         <service
             android:name="androidx.work.impl.foreground.SystemForegroundService"
             android:foregroundServiceType="dataSync"
