@@ -13,8 +13,8 @@ class NovelBodyPolicyTest {
 
     @Test
     fun defaultsAndClampsTheChapterWordRange() {
-        assertEquals(ChapterWordRange(3_000, 5_000), normalizeChapterWordRange(0, 0))
-        assertEquals(ChapterWordRange(3_000, 3_000), normalizeChapterWordRange(2_000, 2_500))
+        assertEquals(ChapterWordRange(2_000, 5_000), normalizeChapterWordRange(0, 0))
+        assertEquals(ChapterWordRange(2_000, 2_000), normalizeChapterWordRange(1_500, 1_800))
         assertEquals(ChapterWordRange(4_000, 6_000), normalizeChapterWordRange(4_000, 6_000))
     }
 }
